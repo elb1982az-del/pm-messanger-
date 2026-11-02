@@ -1,5 +1,5 @@
 {
-  "appId": "com.myapp.app",
-  "appName": "My App",
+  "appId": "org.private.pm_messenger",
+  "appName": "P/M",
   "webDir": "dist"
 }

@@ -2,6 +2,8 @@
 bin/
 __pycache__/
 *.pyc
+*.tar.gz
+*.tar.xz
 # Node / Capacitor
 node_modules/
 dist/
