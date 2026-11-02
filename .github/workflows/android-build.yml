@@ -10,7 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write    # GITHUB_TOKEN needs push rights to publish apk/main
+    env:
+      PM_LOG: /tmp/pm_buildlog.txt
     steps:
+      - run: echo "P/M cloud build run ${GITHUB_RUN_ID} start ${GITHUB_SHA::7}" > "$PM_LOG"
       - name: Checkout Code Repository
         uses: actions/checkout@v4
 
@@ -32,19 +35,26 @@ jobs:
           node-version: '20'
 
       - name: Install npm packages
-        run: npm install
+        run: |
+          echo "===== STEP: npm install =====" >> "$PM_LOG"
+          npm install >> "$PM_LOG" 2>&1
 
       - name: Trigger web production build (web/ → dist/)
-        run: npm run build
+        run: |
+          echo "===== STEP: npm run build =====" >> "$PM_LOG"
+          npm run build >> "$PM_LOG" 2>&1
 
       - name: Sync Capacitor native project
-        run: npx cap sync android
+        run: |
+          echo "===== STEP: cap sync =====" >> "$PM_LOG"
+          npx cap sync android >> "$PM_LOG" 2>&1
 
       - name: Compile debug APK with Gradle flags
         run: |
+          echo "===== STEP: gradle assembleDebug =====" >> "$PM_LOG"
           chmod +x android/gradlew
           cd android
-          ./gradlew assembleDebug --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g"
+          ./gradlew assembleDebug --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g" >> "$PM_LOG" 2>&1
 
       - name: Upload Finished APK Installer
         uses: actions/upload-artifact@v4
@@ -65,3 +75,17 @@ jobs:
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
           git push -q -f origin apk/main
         if: success()
+
+      - name: Publish build log on failure (SSH-retrievable diagnostics branch)
+        if: failure()
+        run: |
+          STAGE=$(mktemp -d)
+          cp "$PM_LOG" "$STAGE/buildlog-${GITHUB_RUN_ID}.txt"
+          cd "$STAGE"
+          git init -q -b apk-logs/main
+          git config user.name "PM-CI"
+          git config user.email "pm-ci@users.noreply.github.com"
+          git add .
+          git commit -q -m "P/M failed run ${GITHUB_RUN_ID} diagnostics"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push -q -f origin apk-logs/main
