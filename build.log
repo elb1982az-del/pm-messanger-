@@ -1,0 +1,379 @@
+Hit:1 http://http.kali.org/kali kali-rolling InRelease
+Hit:2 https://deb.nodesource.com/node_24.x nodistro InRelease
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+build-essential is already the newest version (12.12).
+git is already the newest version (1:2.53.0-1).
+libsdl2-dev is already the newest version (2.32.74+ds-1).
+libsdl2-image-dev is already the newest version (2.8.12+dfsg-2).
+libsdl2-ttf-dev is already the newest version (2.24.0+dfsg-3+b1).
+zlib1g-dev is already the newest version (1:1.3.dfsg+really1.3.2-3).
+gstreamer1.0-plugins-base is already the newest version (1.28.8-1).
+gstreamer1.0-plugins-base set to manually installed.
+gstreamer1.0-plugins-good is already the newest version (1.28.8-1).
+gstreamer1.0-plugins-good set to manually installed.
+libsqlite3-dev is already the newest version (3.53.4-2).
+sqlite3 is already the newest version (3.53.4-2).
+bzip2 is already the newest version (1.0.8-6+b2).
+bzip2 set to manually installed.
+libbz2-dev is already the newest version (1.0.8-6+b2).
+libbz2-dev set to manually installed.
+libssl-dev is already the newest version (3.6.5-1).
+openssl is already the newest version (3.6.5-1).
+openssl set to manually installed.
+liblzma-dev is already the newest version (5.8.4-1).
+liblzma-dev set to manually installed.
+libreadline-dev is already the newest version (8.3-4).
+libncurses-dev is already the newest version (6.6+20260608-2).
+libffi-dev is already the newest version (3.8.0-2).
+uuid-dev is already the newest version (2.42.4-1).
+uuid-dev set to manually installed.
+unzip is already the newest version (6.0-31).
+unzip set to manually installed.
+zip is already the newest version (3.0-16).
+zip set to manually installed.
+autoconf is already the newest version (2.73-2).
+automake is already the newest version (1:1.18.1-4).
+automake set to manually installed.
+libtool is already the newest version (2.6.2-3).
+libtool set to manually installed.
+pkg-config is already the newest version (2.5.1-4).
+Solving dependencies...
+The following packages were automatically installed and are no longer required:
+  bluez-hcidump chromium-sandbox golang-1.26 golang-1.26-doc golang-1.26-go
+  golang-1.26-src gr-air-modes libabsl20260107 libavfilter11 libavformat62
+  libbluray3 libconfig++11 libconfig11 libfec0 libgeos3.14.1
+  libgnuradio-air-modes1t64 libgrpc++1.51t64 libgrpc29t64 libhdf4-0
+  libhdf5-hl-310 libimath-3-1-29t64 libjim0.83 libkmlbase1t64 libkmldom1t64
+  libkmlengine1t64 libllvmspirvlib18.1 liblua5.2-0 libntfs-3g89t64
+  libopenjph0.27 libparams-util-perl libperl5.40 libpoppler156 libprotoc32t64
+  libstd-rust-1.95 libswscale9 libvidstab1.1 llvm-spirv-18 perl-modules-5.40
+  python3-mitmproxy-wireguard python3.13-tk ruby-async-io ruby-atomic
+  ruby-http-parser.rb ruby-metrics ruby-multipart-post ruby-traces
+Use 'apt autoremove' to remove them.
+The following additional packages will be installed:
+  ffplay flac libavc1394-0 libavdevice63 libavutil-dev libflac++11 libflac-dev
+  libmpg123-dev libogg-dev libopus-dev libopusfile-dev libout123-0t64
+  libportmidi2 libsdl2-mixer-2.0-0 libswresample-dev libsyn123-0t64
+  libvorbis-dev libxmp-dev libxmp4
+Suggested packages:
+  ffmpeg-doc gstreamer1.0-doc
+The following NEW packages will be installed:
+  ffmpeg ffplay flac libavc1394-0 libavcodec-dev libavdevice63 libavformat-dev
+  libavutil-dev libflac++11 libflac-dev libgdbm-compat-dev libgdbm-dev
+  libgstreamer1.0-dev libmpg123-dev libogg-dev libopus-dev libopusfile-dev
+  libout123-0t64 libportmidi-dev libportmidi2 libsdl2-mixer-2.0-0
+  libsdl2-mixer-dev libswresample-dev libswscale-dev libsyn123-0t64
+  libvorbis-dev libxmp-dev libxmp4
+0 upgraded, 28 newly installed, 0 to remove and 314 not upgraded.
+23 not fully installed or removed.
+Need to get 18.8 MB of archives.
+After this operation, 57.9 MB of additional disk space will be used.
+Get:1 http://mirrors.ocf.berkeley.edu/kali kali-rolling/main arm64 libavc1394-0 arm64 0.5.4-6 [17.7 kB]
+Get:3 http://kali.download/kali kali-rolling/main arm64 ffmpeg arm64 7:9.0.2-3 [1,673 kB]
+Get:10 http://http.kali.org/kali kali-rolling/main arm64 libflac++11 arm64 1.5.0+ds-5+b1 [57.6 kB]
+Get:13 http://http.kali.org/kali kali-rolling/main arm64 libgdbm-dev arm64 1.26-1+b2 [167 kB]
+Get:21 http://http.kali.org/kali kali-rolling/main arm64 libportmidi2 arm64 2:2.0.8-1+b1 [23.4 kB]
+Get:4 http://kali.download/kali kali-rolling/main arm64 ffplay arm64 7:9.0.2-3 [537 kB]
+Get:5 http://http.kali.org/kali kali-rolling/main arm64 flac arm64 1.5.0+ds-5+b1 [154 kB]
+Get:6 http://kali.download/kali kali-rolling/main arm64 libavutil-dev arm64 7:9.0.2-3 [574 kB]
+Get:7 http://kali.download/kali kali-rolling/main arm64 libswresample-dev arm64 7:9.0.2-3 [106 kB]
+Get:8 http://kali.download/kali kali-rolling/main arm64 libavcodec-dev arm64 7:9.0.2-3 [7,590 kB]
+Get:2 http://mirrors.ocf.berkeley.edu/kali kali-rolling/main arm64 libavdevice63 arm64 7:9.0.2-3 [101 kB]
+Get:27 http://http.kali.org/kali kali-rolling/main arm64 libsdl2-mixer-dev arm64 2.8.2+dfsg-1 [45.5 kB]
+Get:9 http://kali.download/kali kali-rolling/main arm64 libavformat-dev arm64 7:9.0.2-3 [1,472 kB]
+Get:11 http://http.kali.org/kali kali-rolling/main arm64 libogg-dev arm64 1.3.6-2+b1 [208 kB]
+Get:12 http://http.kali.org/kali kali-rolling/main arm64 libflac-dev arm64 1.5.0+ds-5+b1 [256 kB]
+Get:14 http://http.kali.org/kali kali-rolling/main arm64 libgdbm-compat-dev arm64 1.26-1+b2 [52.3 kB]
+Get:15 http://kali.download/kali kali-rolling/main arm64 libgstreamer1.0-dev arm64 1.28.8-1 [611 kB]
+Get:16 http://kali.download/kali kali-rolling/main arm64 libout123-0t64 arm64 1.33.7-1 [29.4 kB]
+Get:17 http://kali.download/kali kali-rolling/main arm64 libsyn123-0t64 arm64 1.33.7-1 [88.3 kB]
+Get:18 http://kali.download/kali kali-rolling/main arm64 libmpg123-dev arm64 1.33.7-1 [62.3 kB]
+Get:19 http://http.kali.org/kali kali-rolling/main arm64 libopus-dev arm64 1.6.1-1+b1 [3,510 kB]
+Get:20 http://http.kali.org/kali kali-rolling/main arm64 libopusfile-dev arm64 0.12-4+b4 [61.6 kB]
+Get:22 http://http.kali.org/kali kali-rolling/main arm64 libportmidi-dev arm64 2:2.0.8-1+b1 [76.9 kB]
+Get:23 http://kali.download/kali kali-rolling/main arm64 libxmp4 arm64 4.7.4-1 [306 kB]
+Get:24 http://http.kali.org/kali kali-rolling/main arm64 libsdl2-mixer-2.0-0 arm64 2.8.2+dfsg-1 [79.8 kB]
+Get:25 http://http.kali.org/kali kali-rolling/main arm64 libvorbis-dev arm64 1.3.7-3+b2 [320 kB]
+Get:26 http://kali.download/kali kali-rolling/main arm64 libxmp-dev arm64 4.7.4-1 [123 kB]
+Get:28 http://kali.download/kali kali-rolling/main arm64 libswscale-dev arm64 7:9.0.2-3 [524 kB]
+dpkg-preconfigure: unable to re-open stdin: No such file or directory
+Fetched 18.8 MB in 5s (4,003 kB/s)
+Selecting previously unselected package libavc1394-0:arm64.
+dpkg: warning: files list file for package 'openssh-client' missing; assuming package has no files currently installed
+dpkg: warning: files list file for package 'pkexec' missing; assuming package has no files currently installed
+dpkg: warning: files list file for package 'wordlists' missing; assuming package has no files currently installed
+dpkg: warning: files list file for package 'polkitd' missing; assuming package has no files currently installed
+(Reading database… (Reading database… 5%(Reading database… 10%(Reading database… 15%(Reading database… 20%(Reading database… 25%(Reading database… 30%(Reading database… 35%(Reading database… 40%(Reading database… 45%(Reading database… 50%(Reading database… 55%(Reading database… 60%(Reading database… 65%(Reading database… 70%(Reading database… 75%(Reading database… 80%(Reading database… 85%(Reading database… 90%(Reading database… 95%(Reading database… 100%(Reading database… 490490 files and directories currently installed.)
+Preparing to unpack …/00-libavc1394-0_0.5.4-6_arm64.deb…
+Unpacking libavc1394-0:arm64 (0.5.4-6)…
+Selecting previously unselected package libavdevice63:arm64.
+Preparing to unpack …/01-libavdevice63_7%3a9.0.2-3_arm64.deb…
+Unpacking libavdevice63:arm64 (7:9.0.2-3)…
+Selecting previously unselected package ffmpeg.
+Preparing to unpack …/02-ffmpeg_7%3a9.0.2-3_arm64.deb…
+Unpacking ffmpeg (7:9.0.2-3)…
+Selecting previously unselected package ffplay.
+Preparing to unpack …/03-ffplay_7%3a9.0.2-3_arm64.deb…
+Unpacking ffplay (7:9.0.2-3)…
+Selecting previously unselected package flac.
+Preparing to unpack …/04-flac_1.5.0+ds-5+b1_arm64.deb…
+Unpacking flac (1.5.0+ds-5+b1)…
+Selecting previously unselected package libavutil-dev:arm64.
+Preparing to unpack …/05-libavutil-dev_7%3a9.0.2-3_arm64.deb…
+Unpacking libavutil-dev:arm64 (7:9.0.2-3)…
+Selecting previously unselected package libswresample-dev:arm64.
+Preparing to unpack …/06-libswresample-dev_7%3a9.0.2-3_arm64.deb…
+Unpacking libswresample-dev:arm64 (7:9.0.2-3)…
+Selecting previously unselected package libavcodec-dev:arm64.
+Preparing to unpack …/07-libavcodec-dev_7%3a9.0.2-3_arm64.deb…
+Unpacking libavcodec-dev:arm64 (7:9.0.2-3)…
+Selecting previously unselected package libavformat-dev:arm64.
+Preparing to unpack …/08-libavformat-dev_7%3a9.0.2-3_arm64.deb…
+Unpacking libavformat-dev:arm64 (7:9.0.2-3)…
+Selecting previously unselected package libflac++11:arm64.
+Preparing to unpack …/09-libflac++11_1.5.0+ds-5+b1_arm64.deb…
+Unpacking libflac++11:arm64 (1.5.0+ds-5+b1)…
+Selecting previously unselected package libogg-dev:arm64.
+Preparing to unpack …/10-libogg-dev_1.3.6-2+b1_arm64.deb…
+Unpacking libogg-dev:arm64 (1.3.6-2+b1)…
+Selecting previously unselected package libflac-dev:arm64.
+Preparing to unpack …/11-libflac-dev_1.5.0+ds-5+b1_arm64.deb…
+Unpacking libflac-dev:arm64 (1.5.0+ds-5+b1)…
+Selecting previously unselected package libgdbm-dev:arm64.
+Preparing to unpack …/12-libgdbm-dev_1.26-1+b2_arm64.deb…
+Unpacking libgdbm-dev:arm64 (1.26-1+b2)…
+Selecting previously unselected package libgdbm-compat-dev:arm64.
+Preparing to unpack …/13-libgdbm-compat-dev_1.26-1+b2_arm64.deb…
+Unpacking libgdbm-compat-dev:arm64 (1.26-1+b2)…
+Selecting previously unselected package libgstreamer1.0-dev:arm64.
+Preparing to unpack …/14-libgstreamer1.0-dev_1.28.8-1_arm64.deb…
+Unpacking libgstreamer1.0-dev:arm64 (1.28.8-1)…
+Selecting previously unselected package libout123-0t64:arm64.
+Preparing to unpack …/15-libout123-0t64_1.33.7-1_arm64.deb…
+Unpacking libout123-0t64:arm64 (1.33.7-1)…
+Selecting previously unselected package libsyn123-0t64:arm64.
+Preparing to unpack …/16-libsyn123-0t64_1.33.7-1_arm64.deb…
+Unpacking libsyn123-0t64:arm64 (1.33.7-1)…
+Selecting previously unselected package libmpg123-dev:arm64.
+Preparing to unpack …/17-libmpg123-dev_1.33.7-1_arm64.deb…
+Unpacking libmpg123-dev:arm64 (1.33.7-1)…
+Selecting previously unselected package libopus-dev:arm64.
+Preparing to unpack …/18-libopus-dev_1.6.1-1+b1_arm64.deb…
+Unpacking libopus-dev:arm64 (1.6.1-1+b1)…
+Selecting previously unselected package libopusfile-dev:arm64.
+Preparing to unpack …/19-libopusfile-dev_0.12-4+b4_arm64.deb…
+Unpacking libopusfile-dev:arm64 (0.12-4+b4)…
+Selecting previously unselected package libportmidi2:arm64.
+Preparing to unpack …/20-libportmidi2_2%3a2.0.8-1+b1_arm64.deb…
+Unpacking libportmidi2:arm64 (2:2.0.8-1+b1)…
+Selecting previously unselected package libportmidi-dev:arm64.
+Preparing to unpack …/21-libportmidi-dev_2%3a2.0.8-1+b1_arm64.deb…
+Unpacking libportmidi-dev:arm64 (2:2.0.8-1+b1)…
+Selecting previously unselected package libxmp4:arm64.
+Preparing to unpack …/22-libxmp4_4.7.4-1_arm64.deb…
+Unpacking libxmp4:arm64 (4.7.4-1)…
+Selecting previously unselected package libsdl2-mixer-2.0-0:arm64.
+Preparing to unpack …/23-libsdl2-mixer-2.0-0_2.8.2+dfsg-1_arm64.deb…
+Unpacking libsdl2-mixer-2.0-0:arm64 (2.8.2+dfsg-1)…
+Selecting previously unselected package libvorbis-dev:arm64.
+Preparing to unpack …/24-libvorbis-dev_1.3.7-3+b2_arm64.deb…
+Unpacking libvorbis-dev:arm64 (1.3.7-3+b2)…
+Selecting previously unselected package libxmp-dev:arm64.
+Preparing to unpack …/25-libxmp-dev_4.7.4-1_arm64.deb…
+Unpacking libxmp-dev:arm64 (4.7.4-1)…
+Selecting previously unselected package libsdl2-mixer-dev:arm64.
+Preparing to unpack …/26-libsdl2-mixer-dev_2.8.2+dfsg-1_arm64.deb…
+Unpacking libsdl2-mixer-dev:arm64 (2.8.2+dfsg-1)…
+Selecting previously unselected package libswscale-dev:arm64.
+Preparing to unpack …/27-libswscale-dev_7%3a9.0.2-3_arm64.deb…
+Unpacking libswscale-dev:arm64 (7:9.0.2-3)…
+Setting up lighttpd (1.4.85-1)…
+[0;1;31mFailed to read 'lighttpd.conf': No such file or directory[0m
+dpkg: error processing package lighttpd (--configure):
+ old lighttpd package postinst maintainer script subprocess failed with exit status 1
+Setting up libavc1394-0:arm64 (0.5.4-6)…
+Setting up libavutil-dev:arm64 (7:9.0.2-3)…
+dpkg: dependency problems prevent configuration of fluxion:
+ fluxion depends on lighttpd; however:
+  Package lighttpd is not configured yet.
+
+dpkg: error processing package fluxion (--configure):
+ dependency problems - leaving unconfigured
+Setting up tpm-udev (4.2.0-2)…
+[0;1;31mFailed to read 'tpm2-tss.conf': No such file or directory[0m
+dpkg: error processing package tpm-udev (--configure):
+ old tpm-udev package postinst maintainer script subprocess failed with exit status 1
+Setting up udisks2 (2.11.2-1)…
+Failed to chase and open directory '/etc//udev/udev.conf.d', ignoring: Protocol driver not attached
+Failed to chase and open directory '/run//udev/udev.conf.d', ignoring: Protocol driver not attached
+Failed to chase and open directory '/usr/local/lib//udev/udev.conf.d', ignoring: Protocol driver not attached
+Failed to chase and open directory '/usr/lib//udev/udev.conf.d', ignoring: Protocol driver not attached
+Failed to open /etc/udev/udev.conf: Protocol driver not attached
+Running in chroot, ignoring request.
+[0;1;31mFailed to read 'udisks2.conf': No such file or directory[0m
+dpkg: error processing package udisks2 (--configure):
+ old udisks2 package postinst maintainer script subprocess failed with exit status 1
+dpkg: dependency problems prevent configuration of lighttpd-mod-openssl:
+ lighttpd-mod-openssl depends on lighttpd (= 1.4.85-1); however:
+  Package lighttpd is not configured yet.
+
+dpkg: error processing package lighttpd-mod-openssl (--configure):
+ dependency problems - leaving unconfigured
+Setting up libxmp4:arm64 (4.7.4-1)…
+Setting up libswresample-dev:arm64 (7:9.0.2-3)…
+Setting up libgstreamer1.0-dev:arm64 (1.28.8-1)…
+Setting up libavcodec-dev:arm64 (7:9.0.2-3)…
+Setting up screen (5.0.2-1)…
+[0;1;31mFailed to read 'screen-cleanup.conf': No such file or directory[0m
+dpkg: error processing package screen (--configure):
+ old screen package postinst maintainer script subprocess failed with exit status 1
+Setting up libflac++11:arm64 (1.5.0+ds-5+b1)…
+Setting up libavformat-dev:arm64 (7:9.0.2-3)…
+Setting up docker.io (28.5.2+dfsg4-5)…
+[0;1;31mFailed to read 'docker.conf': No such file or directory[0m
+dpkg: error processing package docker.io (--configure):
+ old docker.io package postinst maintainer script subprocess failed with exit status 1
+Setting up libogg-dev:arm64 (1.3.6-2+b1)…
+Setting up dnsmasq-base (2.93-3)…
+[0;1;31mFailed to read 'dnsmasq-base.conf': No such file or directory[0m
+dpkg: error processing package dnsmasq-base (--configure):
+ old dnsmasq-base package postinst maintainer script subprocess failed with exit status 1
+Setting up libavdevice63:arm64 (7:9.0.2-3)…
+Setting up libopus-dev:arm64 (1.6.1-1+b1)…
+dpkg: dependency problems prevent configuration of gvfs-daemons:
+ gvfs-daemons depends on udisks2; however:
+  Package udisks2 is not configured yet.
+
+dpkg: error processing package gvfs-daemons (--configure):
+ dependency problems - leaving unconfigured
+Setting up speech-dispatcher (0.12.1-5)…
+[0;1;31mFailed to read 'speech-dispatcher.conf': No such file or directory[0m
+dpkg: error processing package speech-dispatcher (--configure):
+ old speech-dispatcher package postinst maintainer script subprocess failed with exit status 1
+Setting up libportmidi2:arm64 (2:2.0.8-1+b1)…
+dpkg: dependency problems prevent configuration of gvfs-backends:
+ gvfs-backends depends on gvfs-daemons (= 1.62.0-3); however:
+  Package gvfs-daemons is not configured yet.
+
+dpkg: error processing package gvfs-backends (--configure):
+ dependency problems - leaving unconfigured
+Setting up libsdl2-mixer-2.0-0:arm64 (2.8.2+dfsg-1)…
+Setting up flac (1.5.0+ds-5+b1)…
+Setting up libsyn123-0t64:arm64 (1.33.7-1)…
+Setting up libswscale-dev:arm64 (7:9.0.2-3)…
+dpkg: dependency problems prevent configuration of speech-dispatcher-espeak-ng:
+ speech-dispatcher-espeak-ng depends on speech-dispatcher (= 0.12.1-5); however:
+  Package speech-dispatcher is not configured yet.
+
+dpkg: error processing package speech-dispatcher-espeak-ng (--configure):
+ dependency problems - leaving unconfigured
+Setting up libout123-0t64:arm64 (1.33.7-1)…
+Setting up libportmidi-dev:arm64 (2:2.0.8-1+b1)…
+dpkg: dependency problems prevent configuration of gnome-disk-utility:
+ gnome-disk-utility depends on udisks2; however:
+  Package udisks2 is not configured yet.
+
+dpkg: error processing package gnome-disk-utility (--configure):
+ dependency problems - leaving unconfigured
+dpkg: dependency problems prevent configuration of orca:
+ orca depends on speech-dispatcher; however:
+  Package speech-dispatcher is not configured yet.
+
+dpkg: error processing package orca (--configure):
+ dependency problems - leaving unconfigured
+Setting up ffmpeg (7:9.0.2-3)…
+Setting up libgdbm-dev:arm64 (1.26-1+b2)…
+Setting up pipewire:arm64 (1.6.9-2)…
+[0;1;31mFailed to read 'pipewire.conf': No such file or directory[0m
+dpkg: error processing package pipewire:arm64 (--configure):
+ old pipewire:arm64 package postinst maintainer script subprocess failed with exit status 1
+Setting up network-manager-openvpn (1.12.5-2)…
+[0;1;31mFailed to read 'nm-openvpn-sysusers.conf': No such file or directory[0m
+dpkg: error processing package network-manager-openvpn (--configure):
+ old network-manager-openvpn package postinst maintainer script subprocess failed with exit status 1
+dpkg: dependency problems prevent configuration of lighttpd-mod-deflate:
+ lighttpd-mod-deflate depends on lighttpd (= 1.4.85-1); however:
+  Package lighttpd is not configured yet.
+
+dpkg: error processing package lighttpd-mod-deflate (--configure):
+ dependency problems - leaving unconfigured
+Setting up libvorbis-dev:arm64 (1.3.7-3+b2)…
+Setting up libflac-dev:arm64 (1.5.0+ds-5+b1)…
+Setting up ffplay (7:9.0.2-3)…
+Setting up libxmp-dev:arm64 (4.7.4-1)…
+dpkg: dependency problems prevent configuration of gvfs:arm64:
+ gvfs:arm64 depends on gvfs-daemons (<< 1.62.0-3.1~); however:
+  Package gvfs-daemons is not configured yet.
+ gvfs:arm64 depends on gvfs-daemons (>= 1.62.0-3); however:
+  Package gvfs-daemons is not configured yet.
+
+dpkg: error processing package gvfs:arm64 (--configure):
+ dependency problems - leaving unconfigured
+dpkg: dependency problems prevent configuration of network-manager-openvpn-gnome:
+ network-manager-openvpn-gnome depends on network-manager-openvpn (= 1.12.5-2); however:
+  Package network-manager-openvpn is not configured yet.
+
+dpkg: error processing package network-manager-openvpn-gnome (--configure):
+ dependency problems - leaving unconfigured
+Setting up libgdbm-compat-dev:arm64 (1.26-1+b2)…
+Setting up libopusfile-dev:arm64 (0.12-4+b4)…
+Setting up libmpg123-dev:arm64 (1.33.7-1)…
+Setting up libsdl2-mixer-dev:arm64 (2.8.2+dfsg-1)…
+dpkg: dependency problems prevent configuration of wireplumber:
+ wireplumber depends on pipewire (>= 1.0.2); however:
+  Package pipewire:arm64 is not configured yet.
+
+dpkg: error processing package wireplumber (--configure):
+ dependency problems - leaving unconfigured
+dpkg: dependency problems prevent configuration of pipewire-pulse:
+ pipewire-pulse depends on pipewire (= 1.6.9-2); however:
+  Package pipewire:arm64 is not configured yet.
+
+dpkg: error processing package pipewire-pulse (--configure):
+ dependency problems - leaving unconfigured
+dpkg: dependency problems prevent configuration of gvfs-fuse:
+ gvfs-fuse depends on gvfs (= 1.62.0-3); however:
+  Package gvfs:arm64 is not configured yet.
+
+dpkg: error processing package gvfs-fuse (--configure):
+ dependency problems - leaving unconfigured
+dpkg: dependency problems prevent configuration of kali-desktop-xfce:
+ kali-desktop-xfce depends on pipewire-pulse; however:
+  Package pipewire-pulse is not configured yet.
+ kali-desktop-xfce depends on wireplumber; however:
+  Package wireplumber is not configured yet.
+
+dpkg: error processing package kali-desktop-xfce (--configure):
+ dependency problems - leaving unconfigured
+Processing triggers for libc-bin (2.43-7)…
+Processing triggers for man-db (2.13.1-1+b1)…
+Processing triggers for kali-menu (2026.3.4)…
+Errors were encountered while processing:
+ lighttpd
+ fluxion
+ tpm-udev
+ udisks2
+ lighttpd-mod-openssl
+ screen
+ docker.io
+ dnsmasq-base
+ gvfs-daemons
+ speech-dispatcher
+ gvfs-backends
+ speech-dispatcher-espeak-ng
+ gnome-disk-utility
+ orca
+ pipewire:arm64
+ network-manager-openvpn
+ lighttpd-mod-deflate
+ gvfs:arm64
+ network-manager-openvpn-gnome
+ wireplumber
+ pipewire-pulse
+ gvfs-fuse
+ kali-desktop-xfce
+needrestart is being skipped since dpkg has failed
+E: Sub-process /usr/bin/dpkg returned an error code (1)

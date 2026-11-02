@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+    <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+    <title>P/M</title>
+    <script src="fernet.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+        html, body { height: 100vh; height: 100dvh; }   /* dvh excludes the collapsing URL bar; svh renders fallback */
+        body { background: #0a0a0c; color: #f3f4f6; display: flex; flex-direction: column; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+        /* Fancy Gradient Header */
+        header { background: linear-gradient(135deg, #1f1f2e 0%, #111118 100%); padding: 18px; text-align: center; border-bottom: 1px solid #2d2d3f; font-weight: 700; font-size: 1.25rem; letter-spacing: 1px; color: #00fff0; text-shadow: 0 0 10px rgba(0,255,240,0.3); }
+
+        #setup, #chat { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 20px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); overflow: hidden; }
+        .hidden { display: none !important; }
+
+        /* Premium Input Fields */
+        input[type="text"], input[type="password"] { background: #14141f; border: 1px solid #2d2d3f; color: #fff; padding: 16px; margin-bottom: 16px; border-radius: 12px; font-size: 1rem; transition: all 0.3s ease; outline: none; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
+        input:focus { border-color: #00fff0; box-shadow: 0 0 12px rgba(0,255,240,0.2), inset 0 2px 4px rgba(0,0,0,0.5); }
+
+        /* Fancy Neon Action Buttons */
+        button { background: linear-gradient(135deg, #00fff0 0%, #007aff 100%); border: none; color: #0a0a0c; font-weight: 700; padding: 16px; border-radius: 12px; font-size: 1rem; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,255,240,0.2); }
+        button:active { transform: scale(0.98); opacity: 0.9; }
+
+        /* Upgraded Chat Layout */
+        #chat-window { flex: 1; overflow-y: auto; background: #0d0d14; border: 1px solid #1f1f2e; border-radius: 16px; padding: 20px; margin-bottom: 20px; display: flex; flex-direction: column; gap: 12px; box-shadow: inset 0 4px 20px rgba(0,0,0,0.6); }
+
+        /* Premium Message Bubbles */
+        .msg { max-width: 80%; padding: 12px 16px; border-radius: 20px; word-break: break-word; line-height: 1.5; font-size: 0.98rem; animation: fadeIn 0.2s ease-out; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+        .msg.sent { background: linear-gradient(135deg, #007aff 0%, #0040aa 100%); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; border: 1px solid rgba(255,255,255,0.1); }
+        .msg.received { background: linear-gradient(135deg, #222233 0%, #171724 100%); color: #e5e7eb; align-self: flex-start; border-bottom-left-radius: 4px; border: 1px solid #2d2d3f; }
+
+        .media-preview { max-width: 100%; border-radius: 12px; margin-top: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+
+        /* Layout Controls Container */
+        .input-row { display: flex; gap: 10px; align-items: center; }
+        .input-row input { flex: 1; margin-bottom: 0; }
+        /* Prevent the row from ever overflowing off the right edge */
+        .icon-btn, #send-btn { flex-shrink: 0; }
+        #msg-input { min-width: 0; }
+
+        /* Fancy Icon Control Buttons */
+        .icon-btn { background: #14141f; border: 1px solid #2d2d3f; padding: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center; width: 54px; height: 54px; font-size: 1.3rem; color: #00fff0; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: all 0.3s ease; }
+        .icon-btn:focus, .icon-btn:active { border-color: #00fff0; background: #1f1f33; }
+        #send-btn { height: 54px; padding: 0 24px; box-shadow: 0 4px 12px rgba(0,122,255,0.3); }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+<header>⚡ P / M</header>
+
+<div id="setup">
+    <div style="text-align: center; margin-bottom: 24px; color: #8a8a9e; font-size: 0.9rem;">ENTER SECURE CREDENTIALS</div>
+    <input type="text" id="username" placeholder="Username" value="OT76">
+    <input type="password" id="pwd" placeholder="Password" autofocus>
+    <button id="login-btn">Secure Login</button>
+    <div id="err" style="color: #ff3b30; text-align: center; font-size: 0.9rem; margin-top: 10px; font-weight: 600;"></div>
+</div>
+
+<div id="chat" class="hidden">
+    <div id="chat-window"></div>
+    <div class="input-row">
+        <label class="icon-btn" for="file-input" style="cursor: pointer; line-height: 54px; text-align: center;">🖼️</label>
+        <input type="file" id="file-input" accept="image/*" style="display: none;">
+
+        <button class="icon-btn" id="mic-btn">🎙️</button>
+
+        <input type="text" id="msg-input" placeholder="Type an encrypted message...">
+        <button id="send-btn">Send</button>
+    </div>
+</div>
+
+<script>
+    const KEY = '6c-NfG71TzE5x4_VwK7u_PZ7N5D1q-99V3eX9_b5H40=';   // Section 4: static Fernet key
+    const RETENTION_MS = 1800 * 1000;                              // Section 3: 30-min lifespan
+    // Unique per-device sender id (display name is still OT76 on both sides —
+    // shared sender IDs are what broke phone-to-phone delivery)
+    let deviceId = localStorage.getItem('pm_device_id');
+    if (!deviceId) {
+        deviceId = 'OT76-' + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem('pm_device_id', deviceId);
+    }
+    let receivedTokens = new Set(JSON.parse(localStorage.getItem('pm_seen_peer') || '[]'));
+    function rememberPayload(token) {
+        receivedTokens.add(token);
+        localStorage.setItem('pm_seen_peer', JSON.stringify([...receivedTokens].slice(-300)));
+    }
+
+    const seenTokens = new Set();   // own Fernet tokens → echo self-skip / history reconciliation
+    let cursor = Number(localStorage.getItem('pm_cursor') || 0);
+    const vault = [];               // live bubbles ({ts, el}) for the 30-min purge
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+
+    document.getElementById('login-btn').onclick = () => {
+        const u = document.getElementById('username').value.trim();
+        const p = document.getElementById('pwd').value.trim();
+        if(u === "OT76" && p === "love you") {
+            document.getElementById('setup').classList.add('hidden');
+            document.getElementById('chat').classList.remove('hidden');
+            setupMediaPermissions();
+            setInterval(poll, 2000);
+            setInterval(purgeExpired, 5000);
+            purgeExpired();
+        } else {
+            document.getElementById('err').innerText = "ACCESS DENIED";
+        }
+    };
+
+    async function setupMediaPermissions() {
+        try {
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(mediaStream);
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+            mediaRecorder.onstop = async () => {
+                // Encrypt the voice note and actually transmit it
+                const blobDataUrl = await new Promise((res) => {
+                    const r = new FileReader();
+                    r.onload = () => res(r.result);
+                    r.readAsDataURL(new Blob(audioChunks));
+                });
+                audioChunks = [];
+                appendMedia(blobDataUrl, 'sent');
+                transmit(blobDataUrl);
+            };
+        } catch(e) {
+            console.log("Media initialization skipped or unsecure context framework trigger.");
+        }
+    }
+
+    const micBtn = document.getElementById('mic-btn');
+    micBtn.onclick = () => {
+        if (!mediaRecorder) return alert("Microphone blocked. Ensure connection matches HTTPS protocol securely.");
+        if (mediaRecorder.state === "inactive") {
+            mediaRecorder.start();
+            micBtn.style.background = "#ff3b30";
+            micBtn.style.borderColor = "#ff3b30";
+            micBtn.innerText = "🛑";
+        } else {
+            mediaRecorder.stop();
+            micBtn.style.background = "#14141f";
+            micBtn.style.borderColor = "#2d2d3f";
+            micBtn.innerText = "🎙️";
+        }
+    };
+
+    document.getElementById('file-input').onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = async function(event) {
+                appendMedia(event.target.result, 'sent');   // local preview
+                await transmit(event.target.result);        // encrypted send
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    // Section 4: encrypt on-device before transport; Section 3 records live here
+    const vaultItem = (el, kind) => { vault.push({ ts: Date.now(), el }); };
+    async function transmit(text) {
+        const enc = await FernetLite.encrypt(KEY, text);
+        seenTokens.add(enc);                     // mark own echo so we never re-render it
+        localStorage.setItem('pm_last_seen', JSON.stringify([...seenTokens].slice(-200)));
+        fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sender: deviceId, payload: enc })
+        });
+    }
+
+    document.getElementById('send-btn').onclick = async () => {
+        const inp = document.getElementById('msg-input');
+        const txt = inp.value.trim();
+        if(!txt) return;
+        inp.value = '';
+        append(txt + "\n⏱ " + stamp(RETENTION_MS), 'sent');
+        await transmit(txt);
+    };
+
+    const inpBox = document.getElementById('msg-input');
+    inpBox.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('send-btn').click(); });
+
+    async function poll() {
+        try {
+            const res = await fetch('/get?after=' + cursor);
+            if (!res.ok) return;
+            const data = await res.json();
+
+            if (data.last_index === undefined) {
+                // Fallback for servers without the cursor API: dedupe by raw token
+                for (const m of data.messages) {
+                    if (m.sender === deviceId || receivedTokens.has(m.payload)) continue;
+                    await renderIncoming(m);
+                    rememberPayload(m.payload);
+                }
+                return;
+            }
+            for (const m of data.messages) {
+                if (m.sender === deviceId) {                    // own messages (reloaded history + echo)
+                    if (seenTokens.has(m.payload)) continue;
+                    let plain;
+                    try { plain = await FernetLite.decrypt(KEY, m.payload); }
+                    catch (e) { continue; }
+                    if (plain.startsWith('data:')) appendMedia(plain, 'sent');
+                    else append(plain + "\n⏱ self-destructs ≤30 min", 'sent');
+                    seenTokens.add(m.payload);
+                } else if (!receivedTokens.has(m.payload)) {    // true incoming peer message (idempotent)
+                    await renderIncoming(m);
+                }
+                rememberPayload(m.payload);
+            }
+            cursor = data.last_index;                          // everything ≤ last_index is now handled
+            localStorage.setItem('pm_cursor', String(cursor));
+        } catch (e) { /* relay down — silent */ }
+    }
+
+    async function renderIncoming(m) {
+        let plain;
+        try { plain = await FernetLite.decrypt(KEY, m.payload); }
+        catch (e) { plain = "[undecryptable packet]"; }
+        if (plain.startsWith('data:')) appendMedia(plain, 'received');
+        else append(plain + "\n⏱ self-destructs ≤30 min", 'received');
+    }
+
+    const stamp = (ms) => "30-min self-destruct";
+
+    function append(t, cl) {
+        const d = document.createElement('div'); d.className = `msg ${cl}`; d.innerText = t;
+        const w = document.getElementById('chat-window'); w.appendChild(d); w.scrollTop = w.scrollHeight;
+        vaultItem(d);
+    }
+
+    function appendMedia(src, cl) {
+        const d = document.createElement('div'); d.className = `msg ${cl}`;
+        if (src.startsWith('data:image')) {
+            const img = document.createElement('img'); img.src = src; img.className = 'media-preview';
+            d.appendChild(img);
+        } else {
+            const aud = document.createElement('audio'); aud.src = src; aud.controls = true; aud.className = 'media-preview';
+            d.appendChild(aud);
+        }
+        const w = document.getElementById('chat-window'); w.appendChild(d); w.scrollTop = w.scrollHeight;
+        vaultItem(d);
+    }
+
+    // Section 3: purge expired records + their layout nodes
+    function purgeExpired() {
+        const now = Date.now();
+        for (let i = vault.length - 1; i >= 0; i--) {
+            if (now - vault[i].ts > RETENTION_MS) {
+                vault[i].el.remove();
+                vault.splice(i, 1);
+            } else {
+                vault[i].el.title = "self-destructs in ~" + Math.ceil((RETENTION_MS - (now - vault[i].ts)) / 60000) + " min";
+            }
+        }
+    }
+</script>
+</body>
+</html>

@@ -28,8 +28,8 @@ class LoginScreen(Screen):
         layout.add_widget(Label(text="P/M - Private Messenger", font_size=24, size_hint_y=None, height=50))
 
         # Section 2: static credential gate
-        self.username_input = TextInput(hint_text="Username", text="OT76", multiline=False, write_tab=False, size_hint_y=None, height=50)
-        self.password_input = TextInput(hint_text="Password", text="love you", password=True, multiline=False, write_tab=False, size_hint_y=None, height=50)
+        self.username_input = TextInput(focus=True, hint_text="Username", text="OT76", multiline=False, write_tab=False, size_hint_y=None, height=50)
+        self.password_input = TextInput(focus=True, hint_text="Password", text="love you", password=True, multiline=False, write_tab=False, size_hint_y=None, height=50)
 
         layout.add_widget(self.username_input)
         layout.add_widget(self.password_input)
@@ -64,7 +64,7 @@ class ChatScreen(Screen):
         layout.add_widget(self.scroll)
 
         input_layout = BoxLayout(orientation='horizontal', size_hint=(1, 0.15), spacing=5)
-        self.msg_input = TextInput(hint_text="Type encrypted message...", multiline=False, write_tab=False)
+        self.msg_input = TextInput(focus=True, hint_text="Type encrypted message...", multiline=False, write_tab=False)
         send_btn = Button(text="Send", size_hint_x=0.25, background_color=(0, 0.6, 0.3, 1))
         send_btn.bind(on_press=self.send_message)
 

@@ -1,0 +1,15 @@
+{
+  "name": "pm-messenger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "P/M private messenger — Capacitor shell over the PWA",
+  "scripts": {
+    "build": "mkdir -p dist && cp -r web/. dist/",
+    "cap:sync": "npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/core": "^8.6.0"
+  }
+}
