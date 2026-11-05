@@ -41,5 +41,11 @@ def handle_get():
 
 
 if __name__ == '__main__':
-    # Runs the network handler in secure mode to unlock camera/microphone permissions
-    app.run(host='0.0.0.0', port=5000, ssl_context=('cert.pem', 'key.pem'), debug=False)
+    # PM_TLS=1 → local HTTPS mode (LAN, self-signed cert.pem/key.pem)
+    # no PM_TLS → plain HTTP mode meant to sit behind a public TLS tunnel
+    # (cloudflared / ngrok / serveo) with HTTPS terminated at the tunnel entry.
+    import os
+    if os.environ.get('PM_TLS'):
+        app.run(host='0.0.0.0', port=5000, ssl_context=('cert.pem', 'key.pem'), debug=False)
+    else:
+        app.run(host='0.0.0.0', port=5000, debug=False)

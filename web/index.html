@@ -169,12 +169,17 @@
         const enc = await FernetLite.encrypt(KEY, text);
         seenTokens.add(enc);                     // mark own echo so we never re-render it
         localStorage.setItem('pm_last_seen', JSON.stringify([...seenTokens].slice(-200)));
-        fetch('/send', {
+        fetch(RELAY_URL + '/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sender: deviceId, payload: enc })
         });
     }
+
+    // Public relay entry point — tunnel HTTPS endpoint (works on any network).
+    // The installed APK runs from on-device assets, so relative fetch('/send')
+    // would hit the WebView's own localhost instead of the relay. Absolute URL required.
+    const RELAY_URL = "https://speeds-reduction-measurements-vhs.trycloudflare.com";
 
     document.getElementById('send-btn').onclick = async () => {
         const inp = document.getElementById('msg-input');
@@ -190,7 +195,7 @@
 
     async function poll() {
         try {
-            const res = await fetch('/get?after=' + cursor);
+            const res = await fetch(RELAY_URL + '/get?after=' + cursor);
             if (!res.ok) return;
             const data = await res.json();
 
