@@ -86,13 +86,30 @@
         deviceId = 'OT76-' + Math.random().toString(36).slice(2, 10);
         localStorage.setItem('pm_device_id', deviceId);
     }
-    let receivedTokens = new Set(JSON.parse(localStorage.getItem('pm_seen_peer') || '[]'));
+    // Dedup entries persist as short fingerprints (prefix + length), never full
+    // tokens — one encrypted image token is hundreds of KB and a Set of those
+    // blew the 5 MB localStorage quota (QuotaExceededError on pm_seen_peer).
+    function sig(t) { return t.slice(0, 32) + ':' + t.length; }
+    function loadSet(key) {
+        try {
+            const arr = JSON.parse(localStorage.getItem(key) || '[]');
+            // Legacy full-token entries (>50 chars) are clog from uncompressed-image
+            // rounds; they are dropped here rather than re-persisted.
+            return new Set(arr.filter(x => typeof x === 'string' && x.length <= 50));
+        } catch (e) {
+            try { localStorage.removeItem(key); } catch (_) {}
+            return new Set();
+        }
+    }
+    let receivedTokens = loadSet('pm_seen_peer');
     function rememberPayload(token) {
-        receivedTokens.add(token);
-        localStorage.setItem('pm_seen_peer', JSON.stringify([...receivedTokens].slice(-300)));
+        receivedTokens.add(sig(token));
+        try {
+            localStorage.setItem('pm_seen_peer', JSON.stringify([...receivedTokens].slice(-300)));
+        } catch (e) { /* quota edge — in-memory dedup still covers this session */ }
     }
 
-    const seenTokens = new Set();   // own Fernet tokens → echo self-skip / history reconciliation
+    const seenTokens = loadSet('pm_last_seen');   // own Fernet fingerprints → echo self-skip / history reconciliation
     let cursor = Number(localStorage.getItem('pm_cursor') || 0);
 
     // --- connection status badge: the app must never fail silently again ---
@@ -221,8 +238,10 @@
     const vaultItem = (el, kind) => { vault.push({ ts: Date.now(), el }); };
     async function transmit(text) {
         const enc = await FernetLite.encrypt(KEY, text);
-        seenTokens.add(enc);                     // mark own echo so we never re-render it
-        localStorage.setItem('pm_last_seen', JSON.stringify([...seenTokens].slice(-200)));
+        seenTokens.add(sig(enc));                // mark own echo so we never re-render it
+        try {
+            localStorage.setItem('pm_last_seen', JSON.stringify([...seenTokens].slice(-200)));
+        } catch (e) { /* quota edge — in-memory dedup still covers this session */ }
         fetch(RELAY_URL + '/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -259,7 +278,7 @@
             if (data.last_index === undefined) {
                 // Fallback for servers without the cursor API: dedupe by raw token
                 for (const m of data.messages) {
-                    if (m.sender === deviceId || receivedTokens.has(m.payload)) continue;
+                    if (m.sender === deviceId || receivedTokens.has(sig(m.payload))) continue;
                     await renderIncoming(m);
                     rememberPayload(m.payload);
                 }
@@ -267,14 +286,14 @@
             }
             for (const m of data.messages) {
                 if (m.sender === deviceId) {                    // own messages (reloaded history + echo)
-                    if (seenTokens.has(m.payload)) continue;
+                    if (seenTokens.has(sig(m.payload))) continue;
                     let plain;
                     try { plain = await FernetLite.decrypt(KEY, m.payload); }
                     catch (e) { continue; }
                     if (plain.startsWith('data:')) appendMedia(plain, 'sent');
                     else append(plain + "\n⏱ self-destructs ≤30 min", 'sent');
-                    seenTokens.add(m.payload);
-                } else if (!receivedTokens.has(m.payload)) {    // true incoming peer message (idempotent)
+                    seenTokens.add(sig(m.payload));
+                } else if (!receivedTokens.has(sig(m.payload))) {    // true incoming peer message (idempotent)
                     await renderIncoming(m);
                 }
                 rememberPayload(m.payload);
