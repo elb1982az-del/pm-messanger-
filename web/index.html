@@ -166,16 +166,55 @@
         }
     };
 
-    document.getElementById('file-input').onchange = (e) => {
+    // --- Image compression: camera originals as base64 can be 5-10 MB; after
+    // Fernet + base64 overhead they saturate the tunnel and starve the poll ---
+    function compressImage(dataUrl, maxEdge, quality) {
+        maxEdge = maxEdge || 1440; quality = quality === undefined ? 0.7 : quality;
+        return new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => {
+                let w = img.width, h = img.height;
+                const scale = Math.min(1, maxEdge / Math.max(w, h));
+                w = Math.round(w * scale); h = Math.round(h * scale);
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                let out = canvas.toDataURL('image/jpeg', quality);
+                // Hard budget: sequentially shrink until the result is small
+                // enough for a comfortable single-poll delivery (≤ ~250 KB)
+                let tries = 0;
+                while (out.length > 340_000 && tries < 3) {
+                    tries++;
+                    const shrink = document.createElement('canvas');
+                    shrink.width = Math.floor(canvas.width / Math.sqrt(2));
+                    shrink.height = Math.floor(canvas.height / Math.sqrt(2));
+                    shrink.getContext('2d').drawImage(canvas, 0, 0, shrink.width, shrink.height);
+                    canvas.width = shrink.width; canvas.height = shrink.height;
+                    canvas.getContext('2d').drawImage(shrink, 0, 0);
+                    out = canvas.toDataURL('image/jpeg', Math.max(0.45, quality - tries * 0.1));
+                }
+                resolve(out);
+            };
+            img.onerror = () => resolve(dataUrl);   // not renderable → pass through raw
+            img.src = dataUrl;
+        });
+    }
+
+    document.getElementById('file-input').onchange = async (e) => {
         const file = e.target.files[0];
         if (file) {
-            const reader = new FileReader();
-            reader.onload = async function(event) {
-                appendMedia(event.target.result, 'sent');   // local preview
-                await transmit(event.target.result);        // encrypted send
-            };
-            reader.readAsDataURL(file);
+            const raw = await new Promise(res => {
+                const reader = new FileReader();
+                reader.onload = ev => res(ev.target.result);
+                reader.readAsDataURL(file);
+            });
+            const payload = (file.type && file.type.startsWith('image/'))
+                ? await compressImage(raw)
+                : raw;
+            appendMedia(payload, 'sent');   // local preview of exactly what we send
+            await transmit(payload);        // encrypted send
         }
+        e.target.value = '';
     };
 
     // Section 4: encrypt on-device before transport; Section 3 records live here
@@ -188,6 +227,8 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sender: deviceId, payload: enc })
+        }).then(r => {
+            if (!r.ok) setNet(false, "send HTTP " + r.status + (r.status === 413 ? " (payload too large)" : ""));
         }).catch(e => setNet(false, "send: " + ((e && (e.name + ': ' + e.message)) || String(e))));
     }
 

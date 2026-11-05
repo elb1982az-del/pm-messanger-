@@ -3,6 +3,9 @@ from flask import Flask, request, jsonify, send_from_directory
 
 # static_url_path='' → /manifest.json, /fernet.js and icons resolve from web/
 app = Flask(__name__, static_folder='web', static_url_path='')
+# Median-size guard: huge uploads (uncompressed camera base64) saturate the tunnel
+# and the in-memory buffer. 4 MB compressed-JPEG payloads are well under this.
+app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024
 relay_buffer = []
 
 
@@ -21,6 +24,8 @@ def index():
 def handle_send():
     data = request.json
     if data:
+        if len(data.get('payload', '')) > 4_500_000:
+            return jsonify({"status": "too_large"}), 413
         data['server_ts'] = time.time()
         relay_buffer.append(data)
     return jsonify({"status": "delivered"})
@@ -35,9 +40,21 @@ def handle_get():
     if after < 0 or after > len(relay_buffer):
         after = 0
     current = relay_buffer[after:]
-    current_payloads = current[-20:] if len(current) > 0 else []
+    # Size-aware delivery window: hand out an in-order prefix under ~300 KB per poll
+    # (oversized items go alone). The cursor advances only as far as actually
+    # delivered, so nothing is skipped — heavy queues simply drain over few polls.
+    delivered = []
+    total = 0
+    last_delivered_idx = after
+    for offset, m in enumerate(current):
+        sz = len(m.get('payload', ''))
+        if delivered and total + sz > 300_000:
+            break
+        delivered.append(m)
+        total += sz
+        last_delivered_idx = after + offset + 1
     # last_index keeps the client dedup cursor working (no 2-second duplicates)
-    return jsonify({"messages": current_payloads, "last_index": len(relay_buffer)})
+    return jsonify({"messages": delivered, "last_index": last_delivered_idx})
 
 
 @app.after_request
