@@ -1,4 +1,4 @@
-package org.private.pm_messenger;
+package org.pm_messenger;
 
 import com.getcapacitor.BridgeActivity;
 

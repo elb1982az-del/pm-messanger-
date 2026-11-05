@@ -1,8 +1,8 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "org.private.pm_messenger"
-    compileSdk = rootProject.ext.compileSdkVersion
+    namespace = "org.pm_messenger"
+    compileSdk = 36
     defaultConfig {
         applicationId "org.private.pm_messenger"
         minSdkVersion rootProject.ext.minSdkVersion
