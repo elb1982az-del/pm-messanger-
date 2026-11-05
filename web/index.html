@@ -13,7 +13,21 @@
         body { background: #0a0a0c; color: #f3f4f6; display: flex; flex-direction: column; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 
         /* Fancy Gradient Header */
-        header { background: linear-gradient(135deg, #1f1f2e 0%, #111118 100%); padding: 18px; text-align: center; border-bottom: 1px solid #2d2d3f; font-weight: 700; font-size: 1.25rem; letter-spacing: 1px; color: #00fff0; text-shadow: 0 0 10px rgba(0,255,240,0.3); }
+        header { background: linear-gradient(135deg, #1f1f2e 0%, #111118 100%); padding: 18px; text-align: center; border-bottom: 1px solid #2d2d3f; font-weight: 700; font-size: 1.25rem; letter-spacing: 1px; color: #00fff0; text-shadow: 0 0 10px rgba(0,255,240,0.3); position: relative; }
+        #settings-btn { position: absolute; right: 18px; top: 50%; transform: translateY(-50%); color: #9a9ab0; font-size: 1.15rem; cursor: pointer; text-shadow: none; }
+
+        /* Phase 3: settings menu */
+        #settings { position: fixed; inset: 0; background: rgba(5,5,10,0.78); z-index: 1000; display: flex; align-items: flex-end; justify-content: center; }
+        .settings-card { background: #15151f; border: 1px solid #2d2d3f; border-radius: 20px 20px 0 0; padding: 24px; width: 100%; max-width: 480px; padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+        .set-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 6px; color: #00fff0; }
+        .set-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid #1f1f2e; }
+        .set-name { font-weight: 600; }
+        .set-sub { color: #8a8a9e; font-size: 0.78rem; margin-top: 3px; }
+        #settings select { background: #14141f; color: #fff; border: 1px solid #2d2d3f; border-radius: 10px; padding: 8px; font-size: 0.92rem; outline: none; }
+        #settings input[type=checkbox] { width: 22px; height: 22px; accent-color: #00fff0; }
+        .set-actions { display: flex; gap: 12px; margin-top: 18px; }
+        .set-actions button { flex: 1; padding: 12px; }
+        .set-actions button.secondary { background: #26263a; color: #e5e7eb; box-shadow: none; }
 
         #setup, #chat { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 20px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); overflow: hidden; }
         .hidden { display: none !important; }
@@ -53,7 +67,7 @@
 </head>
 <body>
 
-<header>⚡ P / M</header>
+<header>⚡ P / M <span id="settings-btn" title="Settings">⚙</span></header>
 
 <div id="setup">
     <div style="text-align: center; margin-bottom: 24px; color: #8a8a9e; font-size: 0.9rem;">ENTER SECURE CREDENTIALS</div>
@@ -73,6 +87,43 @@
 
         <input type="text" id="msg-input" placeholder="Type an encrypted message...">
         <button id="send-btn">Send</button>
+    </div>
+</div>
+
+<!-- Phase 3: settings menu (notifications · ringtones · vibration) -->
+<div id="settings" class="hidden">
+    <div class="settings-card">
+        <div class="set-title">Settings</div>
+        <div class="set-row">
+            <div>
+                <div class="set-name">Push notifications</div>
+                <div class="set-sub">System alert when a message arrives while you're away</div>
+            </div>
+            <input type="checkbox" id="set-notify">
+        </div>
+        <div class="set-row">
+            <div>
+                <div class="set-name">Incoming ringtone</div>
+                <div class="set-sub">P/M Chime uses the bundled native sound</div>
+            </div>
+            <select id="set-ring">
+                <option value="pm">P/M Chime</option>
+                <option value="soft">Soft Beep</option>
+                <option value="dingdong">Ding-Dong</option>
+                <option value="off">Silent</option>
+            </select>
+        </div>
+        <div class="set-row">
+            <div>
+                <div class="set-name">Vibration</div>
+                <div class="set-sub">Short buzz for incoming messages</div>
+            </div>
+            <input type="checkbox" id="set-vibrate">
+        </div>
+        <div class="set-actions">
+            <button id="set-test" class="secondary">▶ Preview</button>
+            <button id="set-close">Done</button>
+        </div>
     </div>
 </div>
 
@@ -126,6 +177,89 @@
         }
     }
 
+    // ============ Phase 3: native notifications · ringtones · settings ============
+    let PM_NOTIFY = localStorage.getItem('pm_notify') !== '0';
+    let PM_RING = localStorage.getItem('pm_ring') || 'pm';
+    let PM_VIB = localStorage.getItem('pm_vibrate') !== '0';
+    function saveSettings() {
+        try {
+            localStorage.setItem('pm_notify', PM_NOTIFY ? '1' : '0');
+            localStorage.setItem('pm_ring', PM_RING);
+            localStorage.setItem('pm_vibrate', PM_VIB ? '1' : '0');
+        } catch (e) {}
+    }
+    const nativeNotify = () => (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications) || null;
+
+    async function requestNotifyPermission() {
+        const pn = nativeNotify();
+        try {
+            if (pn) await pn.requestPermissions();                 // native path (POST_NOTIFICATIONS runtime prompt)
+            else if (window.Notification && Notification.requestPermission) await Notification.requestPermission(); // browser/PWA fallback
+        } catch (e) { /* user declined or unsupported — alerts degrade to in-app sound only */ }
+    }
+
+    function beepPattern(kind) {                                   // in-app tones (WebAudio synth)
+        try {
+            const ac = new (window.AudioContext || window.webkitAudioContext)();
+            const seq = kind === 'soft' ? [[660, 0.18]] : kind === 'dingdong' ? [[784, 0.15], [523, 0.24]] : [[659.25, 0.15], [880, 0.32]];
+            let t = ac.currentTime + 0.02;
+            for (const [f, dur] of seq) {
+                const o = ac.createOscillator(), g = ac.createGain();
+                o.frequency.value = f; o.type = 'sine';
+                o.connect(g); g.connect(ac.destination);
+                g.gain.setValueAtTime(0.0001, t);
+                g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+                g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                o.start(t); o.stop(t + dur + 0.02);
+                t += dur + 0.06;
+            }
+            setTimeout(() => { try { ac.close(); } catch (e) {} }, (t - ac.currentTime + 0.3) * 1000);
+        } catch (e) { /* audio context blocked until first user gesture — harmless */ }
+    }
+
+    let __pmBulk = false;                                          // true while a catch-up replay renders (stay silent)
+    function incomingAlert(preview) {
+        if (!PM_NOTIFY || PM_RING === 'off') return;
+        const hidden = document.hidden;
+        if (hidden && nativeNotify()) {
+            // Native system notification (channel sound = bundled pm_ding.wav for 'pm')
+            const opts = {
+                id: Date.now() % 2000000000,
+                title: 'P/M',
+                body: preview || 'New message',
+                autoCancel: true
+            };
+            if (PM_RING === 'pm') opts.sound = 'pm_ding';
+            nativeNotify().schedule({ notifications: [opts] }).catch(() => {});
+        } else {
+            beepPattern(PM_RING);                                  // audible even when the app is on screen
+        }
+        if (PM_VIB && navigator.vibrate) { try { navigator.vibrate([120, 90, 120]); } catch (e) {} }
+    }
+
+    // ---- settings menu wiring ----
+    const modalEl = document.getElementById('settings');
+    const notifyToggle = document.getElementById('set-notify');
+    const ringSelect = document.getElementById('set-ring');
+    const vibrateToggle = document.getElementById('set-vibrate');
+    document.getElementById('settings-btn').onclick = () => {
+        notifyToggle.checked = PM_NOTIFY; ringSelect.value = PM_RING; vibrateToggle.checked = PM_VIB;
+        modalEl.classList.remove('hidden');
+    };
+    document.getElementById('set-close').onclick = () => modalEl.classList.add('hidden');
+    notifyToggle.onchange = () => {
+        PM_NOTIFY = notifyToggle.checked; saveSettings();
+        if (PM_NOTIFY) requestNotifyPermission();                  // OS prompt fires inside a real user gesture
+    };
+    vibrateToggle.onchange = () => { PM_VIB = vibrateToggle.checked; saveSettings(); };
+    ringSelect.onchange = () => { PM_RING = ringSelect.value; saveSettings(); };
+    document.getElementById('set-test').onclick = () => {
+        if (PM_RING === 'off') return;
+        beepPattern(PM_RING);
+        if (PM_VIB && navigator.vibrate) { try { navigator.vibrate([120, 90, 120]); } catch (e) {} }
+    };
+
+
     const vault = [];               // live bubbles ({ts, el}) for the 30-min purge
     let mediaStream = null;
     let mediaRecorder = null;
@@ -138,6 +272,7 @@
             document.getElementById('setup').classList.add('hidden');
             document.getElementById('chat').classList.remove('hidden');
             setupMediaPermissions();
+            requestNotifyPermission();
             setInterval(poll, 2000);
             setInterval(purgeExpired, 5000);
             purgeExpired();
@@ -274,6 +409,7 @@
             if (!res.ok) { setNet(false, '/get HTTP ' + res.status); return; }
             setNet(true);
             const data = await res.json();
+            __pmBulk = data.messages.length > 5;   // history/catch-up replays stay silent
 
             if (data.last_index === undefined) {
                 // Fallback for servers without the cursor API: dedupe by raw token
@@ -307,8 +443,13 @@
         let plain;
         try { plain = await FernetLite.decrypt(KEY, m.payload); }
         catch (e) { plain = "[undecryptable packet]"; }
-        if (plain.startsWith('data:')) appendMedia(plain, 'received');
-        else append(plain + "\n⏱ self-destructs ≤30 min", 'received');
+        if (plain.startsWith('data:')) {
+            appendMedia(plain, 'received');
+            incomingAlert('📷 New photo / voice note');
+        } else {
+            append(plain + "\n⏱ self-destructs ≤30 min", 'received');
+            incomingAlert(plain.length > 80 ? plain.slice(0, 80) + '…' : plain);
+        }
     }
 
     const stamp = (ms) => "30-min self-destruct";
