@@ -40,6 +40,18 @@ def handle_get():
     return jsonify({"messages": current_payloads, "last_index": len(relay_buffer)})
 
 
+@app.after_request
+def add_cors_headers(resp):
+    # The APK's WebView is cross-origin (serves the app from its own https://localhost
+    # and calls the tunnel origin) — without these headers Chrome rejects every
+    # request with "TypeError: fetch failed" before it ever reaches the route.
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    resp.headers['Access-Control-Max-Age'] = '300'
+    return resp
+
+
 if __name__ == '__main__':
     # PM_TLS=1 → local HTTPS mode (LAN, self-signed cert.pem/key.pem)
     # no PM_TLS → plain HTTP mode meant to sit behind a public TLS tunnel
