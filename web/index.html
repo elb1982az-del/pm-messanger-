@@ -94,6 +94,21 @@
 
     const seenTokens = new Set();   // own Fernet tokens → echo self-skip / history reconciliation
     let cursor = Number(localStorage.getItem('pm_cursor') || 0);
+
+    // --- connection status badge: the app must never fail silently again ---
+    const badge = document.createElement('div');
+    badge.style.cssText = 'position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:9999;padding:4px 12px;border-radius:12px;font-size:11px;font-family:monospace;color:#fff;transition:background .3s;background:#c00;display:none;';
+    document.body.appendChild(badge);
+    function setNet(ok, detail) {
+        if (ok) { badge.style.background = '#2e7d32'; badge.style.display = 'none'; }
+        else {
+            badge.style.background = '#c00';
+            const err = '⇄ relay FAIL: ' + (detail || 'unknown');
+            if (badge.innerText !== err) badge.innerText = err;
+            badge.style.display = 'block';
+        }
+    }
+
     const vault = [];               // live bubbles ({ts, el}) for the 30-min purge
     let mediaStream = null;
     let mediaRecorder = null;
@@ -173,7 +188,7 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sender: deviceId, payload: enc })
-        });
+        }).catch(e => setNet(false, "send: " + ((e && (e.name + ': ' + e.message)) || String(e))));
     }
 
     // Public relay entry point — tunnel HTTPS endpoint (works on any network).
@@ -196,7 +211,8 @@
     async function poll() {
         try {
             const res = await fetch(RELAY_URL + '/get?after=' + cursor);
-            if (!res.ok) return;
+            if (!res.ok) { setNet(false, '/get HTTP ' + res.status); return; }
+            setNet(true);
             const data = await res.json();
 
             if (data.last_index === undefined) {
@@ -224,7 +240,7 @@
             }
             cursor = data.last_index;                          // everything ≤ last_index is now handled
             localStorage.setItem('pm_cursor', String(cursor));
-        } catch (e) { /* relay down — silent */ }
+        } catch (e) { setNet(false, (e && (e.name + ': ' + e.message)) || String(e)); }
     }
 
     async function renderIncoming(m) {
