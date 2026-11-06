@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+    <title>Anonymous</title>
+    <script src="vendor/nacl-fast.min.js"></script>
+    <script src="ratchet.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+        html, body { height: 100vh; height: 100dvh; }
+        body { background: #060a08; color: #e7f5ef; display: flex; flex-direction: column; overflow: hidden; }
+        header { background: linear-gradient(135deg, #12211b 0%, #08110d 100%); padding: 18px; text-align: center; border-bottom: 1px solid #1c3226; font-weight: 700; font-size: 1.2rem; letter-spacing: 1px; color: #7dffce; text-shadow: 0 0 8px rgba(0,255,170,.25); }
+        main { flex: 1; overflow-y: auto; padding: 16px; }
+        .card { background: #0c1410; border: 1px solid #1c3226; border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+        .card h2 { font-size: .95rem; color: #7dffce; margin-bottom: 10px; font-weight: 700; }
+        .sub { color: #7f9c8e; font-size: .78rem; line-height: 1.5; margin-bottom: 10px; }
+        textarea { width: 100%; background: #07110c; color: #baf5d8; border: 1px solid #1c3226; border-radius: 10px; padding: 10px; font-size: .8rem; font-family: ui-monospace, monospace; resize: vertical; }
+        button { background: linear-gradient(135deg, #35ffb8 0%, #0aa06c 100%); border: none; color: #04110b; font-weight: 700; padding: 12px; border-radius: 10px; font-size: .9rem; cursor: pointer; }
+        button:active { transform: scale(.98); opacity: .9; }
+        button.ghost { background: #12201a; color: #9ad8bd; }
+        #selftest { font-family: ui-monospace, monospace; font-size: .8rem; }
+        .pass { color: #52ffa8; } .fail { color: #ff5d7a; }
+        .hidden { display: none !important; }
+        .row { display: flex; gap: 8px; margin-top: 10px; }
+        .row button { flex: 1; }
+    </style>
+</head>
+<body>
+    <header>👤 ANONYMOUS</header>
+    <main>
+        <div class="card">
+            <h2>CryptoCore self-test</h2>
+            <div id="selftest" class="sub">running…</div>
+        </div>
+
+        <div class="card">
+            <h2>Your identity bundle</h2>
+            <div class="sub">Paste this to a peer; they paste it under <em>Add contact</em>. Both sides must add each other.</div>
+            <textarea id="my-bundle" rows="4" readonly></textarea>
+            <div class="row">
+                <button id="copy-bundle">Copy bundle</button>
+                <button id="safety-num" class="ghost">Safety number</button>
+            </div>
+            <div id="safety" class="sub" style="margin-top: 8px;"></div>
+        </div>
+
+        <div class="card">
+            <h2>Add contact</h2>
+            <div class="sub">Their bundle is verified (Ed25519 prekey signature) before any session opens.</div>
+            <textarea id="peer-bundle" rows="4" placeholder="Paste peer bundle JSON"></textarea>
+            <div class="row">
+                <button id="add-contact">Verify &amp; add</button>
+            </div>
+            <div id="add-status" class="sub" style="margin-top: 8px;"></div>
+        </div>
+
+        <div class="card">
+            <h2>Compose (transport pending)</h2>
+            <div class="sub">Phase 1: envelopes are produced with the Double Ratchet and queued locally. Tor hidden-service transport + onion delivery unlock in Phase 2.</div>
+            <textarea id="compose" rows="2" placeholder="Message to test-encrypt"></textarea>
+            <div class="row">
+                <button id="encrypt-btn">Encrypt → queue</button>
+                <button id="decrypt-btn" class="ghost">Decrypt last</button>
+            </div>
+            <div id="compose-status" class="sub" style="margin-top: 8px;"></div>
+        </div>
+    </main>
+
+<script>
+(function() {
+    'use strict';
+    const LS_ID = 'oc_identity_v1';
+    const el = id => document.getElementById(id);
+
+    async function ensureIdentity() {
+        let stored = null;
+        try { stored = JSON.parse(localStorage.getItem(LS_ID) || 'null'); } catch (e) {}
+        if (stored && stored.bundleText) return stored;
+        const made = await CryptoCore.createIdentity();
+        localStorage.setItem(LS_ID, JSON.stringify(made));
+        return made;
+    }
+
+    /* sessions hold the ratchet states of our peers */
+    function sessionsMap() {
+        try { return JSON.parse(localStorage.getItem('oc_sessions') || '{}'); } catch (e) { return {}; }
+    }
+    function saveSessions(map) { try { localStorage.setItem('oc_sessions', JSON.stringify(map)); } catch (e) {} }
+
+    async function selfTest() {
+        const out = el('selftest');
+        try {
+            const A = await CryptoCore.createIdentity();
+            const B = await CryptoCore.createIdentity();
+            const a = await CryptoCore.openInitiator(A.secrets, B.bundleText);
+            const b = await CryptoCore.openResponder(B.secrets);
+            const t1 = await CryptoCore.ratchetEncrypt(a, 'probe-one');
+            if (await CryptoCore.ratchetDecrypt(b, t1) !== 'probe-one') throw new Error('round 1');
+            const t2 = await CryptoCore.ratchetEncrypt(b, 'probe-two');
+            if (await CryptoCore.ratchetDecrypt(a, t2) !== 'probe-two') throw new Error('round 2');
+            const t3 = await CryptoCore.ratchetEncrypt(a, 'probe-three');   // second dh ratchet A side
+            if (await CryptoCore.ratchetDecrypt(b, t3) !== 'probe-three') throw new Error('round 3');
+            const env = JSON.parse(atob(t3));
+            const ct = CryptoCore.b64.b64ToU8(env.c);
+            ct[ct.length - 1] ^= 1;
+            env.c = CryptoCore.b64.u8ToB64(ct);
+            let rejected = false;
+            try { await CryptoCore.ratchetDecrypt(b, btoa(JSON.stringify(env))); } catch (e) { rejected = true; }
+            if (!rejected) throw new Error('tamper accepted!');
+            out.innerHTML = '<span class="pass">✓ X3DH + Double Ratchet live — handshake OK, tamper rejected</span>';
+        } catch (e) {
+            out.innerHTML = '<span class="fail">✗ SELFTEST FAIL: ' + e.message + '</span>';
+        }
+    }
+
+    (async () => {
+        const id = await ensureIdentity();
+        el('my-bundle').value = id.bundleText;
+        await selfTest();
+
+        el('copy-bundle').onclick = () => {
+            el('my-bundle').select();
+            try { document.execCommand('copy'); } catch (e) {}
+            el('safety').textContent = 'bundle copied to clipboard';
+        };
+
+        el('safety-num').onclick = async () => {
+            const peer = el('peer-bundle').value.trim();
+            if (!peer) { el('safety').textContent = 'add a contact first (paste their bundle)'; return; }
+            try {
+                el('safety').textContent = 'safety number: ' + await CryptoCore.safetyNumber(id.bundleText, peer);
+            } catch (e) { el('safety').textContent = 'invalid peer bundle: ' + e.message; }
+        };
+
+        el('add-contact').onclick = async () => {
+            const peer = el('peer-bundle').value.trim();
+            const st = el('add-status');
+            if (!peer) { st.textContent = 'paste their bundle first'; return; }
+            try {
+                await CryptoCore.verifyBundle(peer);   // throws on tamper
+                const sessions = sessionsMap();
+                sessions[peer] = { pending: peer };     // session opens when we initiate
+                saveSessions(sessions);
+                st.innerHTML = '<span class="pass">✓ peer identity signature verified — stored</span>';
+            } catch (e) {
+                st.innerHTML = '<span class="fail">✗ ' + e.message + '</span>';
+            }
+        };
+
+        let lastEnvelope = null;
+        el('encrypt-btn').onclick = async () => {
+            const st = el('compose-status');
+            st.textContent = 'phase 1 scope: only our own identity self-session is open — ';
+            st.textContent += 'transport not wired yet. Encryption demo runs on a throwaway session.';
+            try {
+                const B0 = await CryptoCore.createIdentity();
+                const a = await CryptoCore.openInitiator(id.secrets, B0.bundleText);
+                lastEnvelope = await CryptoCore.ratchetEncrypt(a, el('compose').value || 'queued message');
+                st.innerHTML = '<span class="pass">✓ encrypted envelope queued:</span><br><textarea rows="2" style="margin-top:4px">' + lastEnvelope + '</textarea>';
+            } catch (e) { st.innerHTML = '<span class="fail">✗ ' + e.message + '</span>'; }
+        };
+
+        el('decrypt-btn').onclick = async () => {
+            const st = el('compose-status');
+            if (!lastEnvelope) { st.textContent = 'queue empty — encrypt something first'; return; }
+            try {
+                /* the counterpart decrypts as the responder of that throwaway session */
+                const id2 = JSON.parse(localStorage.getItem('oc_demo_peer_v1') || 'null') || (await (async () => {
+                    const made = await CryptoCore.createIdentity();
+                    localStorage.setItem('oc_demo_peer_v1', JSON.stringify(made));
+                    return made;
+                })());
+                const b = await CryptoCore.openResponder(id2.secrets);
+                const plain = await CryptoCore.ratchetDecrypt(b, lastEnvelope);
+                st.innerHTML = '<span class="pass">✓ decrypted: "' + plain.replace(/</g, '&lt;') + '"</span>';
+            } catch (e) { st.innerHTML = '<span class="fail">✗ ' + e.message + '</span>'; }
+        };
+    })();
+})();
+</script>
+</body>
+</html>

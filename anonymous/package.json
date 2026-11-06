@@ -1,0 +1,22 @@
+{
+  "name": "anonymous-messenger",
+  "version": "0.1.0",
+  "description": "Anonymous — Tor-hidden-service P2P shell on CryptoCore",
+  "main": "index.js",
+  "scripts": {
+    "build": "mkdir -p dist && cp -r web/. dist/",
+    "cap:sync": "npx cap sync android"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/local-notifications": "^8.0.0",
+    "tweetnacl": "1.0.3"
+  },
+  "devDependencies": {}
+}

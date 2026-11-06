@@ -1,0 +1,88 @@
+name: Build Anonymous APK (org.private.anonymous — Tor P2P, Phase skeleton)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'anonymous/**'
+      - '.github/workflows/anonymous-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PM_LOG: /tmp/pm_anon_buildlog.txt
+    steps:
+      - run: echo "Anonymous build run ${GITHUB_RUN_ID} start ${GITHUB_SHA::7}" > "$PM_LOG"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install npm packages
+        working-directory: anonymous
+        run: |
+          echo "===== STEP: npm install =====" >> "$PM_LOG"
+          npm install >> "$PM_LOG" 2>&1
+
+      - name: Build web assets (web/ → dist/)
+        working-directory: anonymous
+        run: |
+          echo "===== STEP: npm run build =====" >> "$PM_LOG"
+          npm run build >> "$PM_LOG" 2>&1
+
+      - name: Sync Capacitor native project
+        working-directory: anonymous
+        run: |
+          echo "===== STEP: cap sync =====" >> "$PM_LOG"
+          npx cap sync android >> "$PM_LOG" 2>&1
+          # 'private' is a Java keyword — the legal compile-time namespace is pinned post-sync
+          sed -i 's|^[[:space:]]*namespace[[:space:]]*=.*|namespace = "org.onionchat"|' android/app/build.gradle
+          grep -q 'namespace = "org.onionchat"' android/app/build.gradle || (echo "namespace pin failed" && exit 1)
+
+      - name: Compile debug APK
+        working-directory: anonymous/android
+        run: |
+          echo "===== STEP: gradle assembleDebug =====" >> "$PM_LOG"
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g" >> "$PM_LOG" 2>&1
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/anonymous/app-debug.apk"
+
+      - name: Publish Anonymous APK (SSH-retrievable branch)
+        if: success()
+        run: |
+          STAGE=$(mktemp -d)
+          cp "$GITHUB_WORKSPACE/anonymous/app-debug.apk" "$STAGE/app-debug.apk"
+          echo "run ${GITHUB_RUN_ID} (${GITHUB_SHA::7}) at $(date -u +%FT%TZ)" > "$STAGE/BUILD_INFO.txt"
+          cd "$STAGE"
+          git init -q -b apk/anonymous
+          git config user.name "Anonymous-CI"
+          git config user.email "anon-ci@users.noreply.github.com"
+          git add .
+          git commit -q -m "Anonymous debug APK — run ${GITHUB_RUN_ID} ${GITHUB_DATA:0:0}(${GITHUB_SHA::7})"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push -q -f origin apk/anonymous
+
+      - name: Publish build log on failure
+        if: failure()
+        run: |
+          STAGE=$(mktemp -d)
+          cp "$PM_LOG" "$STAGE/buildlog-${GITHUB_RUN_ID}.txt"
+          cd "$STAGE"
+          git init -q -b apk-logs/anonymous
+          git config user.name "Anonymous-CI"
+          git config user.email "anon-ci@users.noreply.github.com"
+          git add .
+          git commit -q -m "Anonymous failed run ${GITHUB_RUN_ID} diagnostics"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push -q -f origin apk-logs/anonymous
