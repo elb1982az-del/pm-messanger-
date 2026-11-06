@@ -20,6 +20,19 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Mark run started (git-reachable event marker)
+        if: always()
+        run: |
+          STAGE=$(mktemp -d)
+          echo "$(date -u +%FT%TZ) run ${GITHUB_RUN_ID} for ${GITHUB_SHA::7} — started" > "$STAGE/MARKER.txt"
+          cd "$STAGE"
+          git init -q -b apk-events/anonymous
+          git config user.name "Anonymous-CI"
+          git config user.email "anon-ci@users.noreply.github.com"
+          git add .
+          git add . && git commit -q -m "run ${GITHUB_RUN_ID} start (${GITHUB_SHA::7})"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push -q -f origin apk-events/anonymous
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
