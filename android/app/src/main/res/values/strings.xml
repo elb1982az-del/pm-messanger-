@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">P/M</string>
-    <string name="title_activity_main">P/M</string>
+    <string name="app_name">O.T Private</string>
+    <string name="title_activity_main">O.T Private</string>
     <string name="package_name">org.private.pm_messenger</string>
     <string name="custom_url_scheme">org.private.pm_messenger</string>
 </resources>
