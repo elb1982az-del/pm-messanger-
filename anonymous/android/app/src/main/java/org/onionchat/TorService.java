@@ -218,7 +218,7 @@ public class TorService extends Service {
                     /* 2. hidden service hostname (identity persists on disk) */
                     File hostname = new File(hsDir, "hostname");
                     if (hostname.exists() && hostname.length() > 0) {
-                        String s = new String(readAll(hostname)).trim();
+                        String s = readAll(hostname).trim();
                         if (s.endsWith(".onion")) State.onion = s;
                     }
 
@@ -298,12 +298,17 @@ public class TorService extends Service {
         }
     }
 
-    private static byte[] readAll(File f) throws Exception {
-        FileInputStream in = new FileInputStream(f);
-        byte[] b = new byte[(int) f.length()];
-        int off = 0;
-        while (off < b.length) { int n = in.read(b, off, b.length - off); if (n < 0) break; off += n; }
-        in.close();
-        return b;
+    /** fails soft: empty string on any I/O problem (hostname probe, not critical-path) */
+    private static String readAll(File f) {
+        try {
+            FileInputStream in = new FileInputStream(f);
+            byte[] b = new byte[(int) f.length()];
+            int off = 0;
+            while (off < b.length) { int n = in.read(b, off, b.length - off); if (n < 0) break; off += n; }
+            in.close();
+            return new String(b, 0, off, "UTF-8");
+        } catch (Throwable t) {
+            return "";
+        }
     }
 }
