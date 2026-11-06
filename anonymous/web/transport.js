@@ -49,6 +49,9 @@ Transport.prototype.status = async function() {
             bootstrapped: (r && r.bootstrapped) || 0,
             socks: !!(r && r.socks),
             error: (r && r.error) || '',
+            execVia: (r && r.execVia) || '',
+            attempt: (r && r.attempt) || 0,
+            clockSkew: !!(r && r.clockSkew),
             log: (r && r.log) || ''
         };
     } catch (e) {

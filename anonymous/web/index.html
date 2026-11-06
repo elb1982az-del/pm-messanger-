@@ -470,13 +470,19 @@ el('btn-add').onclick = addContactModal;
 el('menu-chip').onclick = meModal;
 el('tor-chip').onclick = async () => {
     const s = await transport.status();
+    const par = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const attemptTxt = (s.attempt && s.bootstrapped < 100 && !s.ready)
+        ? '<br>attempt: ' + s.attempt + '/3' + ((s.clockSkew || (s.error || '').indexOf('CLOCK SKEW') >= 0) ? ' ⚠ clock skew' : '')
+        : '';
     veil('<h2 style="color:#7dffce;font-size:.95rem;margin-bottom:6px;">Tor transport</h2>' +
         '<div class="sub mono">' +
         'running: ' + (s.running ? 'yes' : 'no') + '<br>ready: ' + (s.ready ? 'yes' : 'no') +
         '<br>socks: ' + (s.socks ? 'up (9050)' : 'down') +
-        '<br>bootstrap: ' + (s.bootstrapped || 0) + '%<br>onion: ' + (s.onion || '(pending)') + '</div>' +
-        (s.error ? '<div class="err mono">' + s.error.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>' : '') +
-        (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><textarea rows="6" readonly class="mono" style="font-size:.68rem;">' + s.log.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</textarea>' : '') +
+        '<br>bootstrap: ' + (s.bootstrapped || 0) + '%<br>onion: ' + (s.onion || '(pending)') +
+        '<br>daemon: ' + (s.execVia ? par(s.execVia) : '(not exec\'d this session)') +
+        attemptTxt + '</div>' +
+        (s.error ? '<div class="err mono">' + par(s.error) + '</div>' : '') +
+        (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><textarea rows="6" readonly class="mono" style="font-size:.68rem;">' + par(s.log) + '</textarea>' : '') +
         '<button class="ghost" id="tc-close">Close</button>' +
         '<button class="ghost" id="tc-restart">Restart tor</button>');
     el('tc-close').onclick = unveil;

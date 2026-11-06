@@ -60,6 +60,9 @@ public class TorBridge extends Plugin {
         r.put("onion", TorService.State.onion == null ? "" : TorService.State.onion);
         r.put("socks", TorService.State.socksLive);
         r.put("error", TorService.State.lastError == null ? "" : TorService.State.lastError);
+        r.put("execVia", TorService.State.execVia == null ? "" : TorService.State.execVia);
+        r.put("attempt", TorService.State.attempt);
+        r.put("clockSkew", TorService.State.clockSkew);
         String log;
         synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
         if (TorService.State.streamTail != null && TorService.State.streamTail.length() > 0)
