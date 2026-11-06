@@ -46,7 +46,10 @@ Transport.prototype.status = async function() {
             running: !!(r && (r.running || r.ready)),
             ready: !!(r && r.ready),
             onion: (r && r.onion) || null,
-            bootstrapped: (r && r.bootstrapped) || 0
+            bootstrapped: (r && r.bootstrapped) || 0,
+            socks: !!(r && r.socks),
+            error: (r && r.error) || '',
+            log: (r && r.log) || ''
         };
     } catch (e) {
         this.statusCache = { available: true, running: false, ready: false, onion: null, bootstrapped: 0, error: String(e && e.message || e) };

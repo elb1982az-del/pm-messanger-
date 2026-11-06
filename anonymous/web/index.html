@@ -301,8 +301,13 @@ function renderChip() {
     if (!online) { c.textContent = 'tor: …'; c.classList.add('busy'); return; }
     if (!online.available) { c.textContent = 'tor: n/a'; return; }
     if (online.ready) { c.textContent = 'tor ✓ ' + shortOnion(online.onion || ''); c.classList.add('on'); return; }
-    c.textContent = 'tor: ' + (online.running ? ('starting ' + (online.bootstrapped || 0) + '%') : 'down');
-    c.classList.add('busy');
+    if (online.running) {
+        if ((online.bootstrapped || 0) > 0) { c.textContent = 'tor: ' + online.bootstrapped + '%'; }
+        else if (online.socks) { c.textContent = 'tor: socks up 0%'; }
+        else { c.textContent = 'tor: starting…'; }
+        c.classList.add('busy'); return;
+    }
+    c.textContent = 'tor: down' + (online.error ? ' ⚠' : '');
 }
 
 function renderList() {
@@ -468,11 +473,15 @@ el('tor-chip').onclick = async () => {
     veil('<h2 style="color:#7dffce;font-size:.95rem;margin-bottom:6px;">Tor transport</h2>' +
         '<div class="sub mono">' +
         'running: ' + (s.running ? 'yes' : 'no') + '<br>ready: ' + (s.ready ? 'yes' : 'no') +
-        '<br>bootstrap: ' + (s.bootstrapped || 0) + '%<br>onion: <span id="tc-onion" class="fauxlink">' + (s.onion || '(pending)') + '</span></div>' +
+        '<br>socks: ' + (s.socks ? 'up (9050)' : 'down') +
+        '<br>bootstrap: ' + (s.bootstrapped || 0) + '%<br>onion: ' + (s.onion || '(pending)') + '</div>' +
+        (s.error ? '<div class="err mono">' + s.error.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>' : '') +
+        (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><textarea rows="6" readonly class="mono" style="font-size:.68rem;">' + s.log.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</textarea>' : '') +
         '<button class="ghost" id="tc-close">Close</button>' +
-        '<div id="tc-extra" class="sub" style="margin-top:10px;"></div>');
+        '<button class="ghost" id="tc-restart">Restart tor</button>');
     el('tc-close').onclick = unveil;
-};
+    el('tc-restart').onclick = async () => { try { await transport.start(); toast('tor restart requested'); } catch (e) { toast('restart failed: ' + e.message, true); } unveil(); };
+};;
 el('btn-selfcheck').onclick = selfCheck;
 el('btn-back').onclick = () => { currentKey = null; el('chat-view').classList.add('hidden'); el('list-view').classList.remove('hidden'); renderList(); };
 el('btn-send').onclick = sendMessage;

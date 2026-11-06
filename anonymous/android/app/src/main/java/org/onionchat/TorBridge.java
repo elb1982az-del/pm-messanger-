@@ -58,7 +58,14 @@ public class TorBridge extends Plugin {
         r.put("ready", TorService.State.ready);
         r.put("bootstrapped", TorService.State.bootstrapped);
         r.put("onion", TorService.State.onion == null ? "" : TorService.State.onion);
+        r.put("socks", TorService.State.socksLive);
         r.put("error", TorService.State.lastError == null ? "" : TorService.State.lastError);
+        String log;
+        synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
+        if (TorService.State.streamTail != null && TorService.State.streamTail.length() > 0)
+            log = TorService.State.streamTail + "\n---\n" + log;
+        if (log.length() > 1400) log = log.substring(log.length() - 1400);
+        r.put("log", log);
         call.resolve(r);
     }
 
