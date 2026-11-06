@@ -6,177 +6,480 @@
     <title>Anonymous</title>
     <script src="vendor/nacl-fast.min.js"></script>
     <script src="ratchet.js"></script>
+    <script src="vault.js"></script>
+    <script src="transport.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
         html, body { height: 100vh; height: 100dvh; }
         body { background: #060a08; color: #e7f5ef; display: flex; flex-direction: column; overflow: hidden; }
-        header { background: linear-gradient(135deg, #12211b 0%, #08110d 100%); padding: 18px; text-align: center; border-bottom: 1px solid #1c3226; font-weight: 700; font-size: 1.2rem; letter-spacing: 1px; color: #7dffce; text-shadow: 0 0 8px rgba(0,255,170,.25); }
-        main { flex: 1; overflow-y: auto; padding: 16px; }
-        .card { background: #0c1410; border: 1px solid #1c3226; border-radius: 14px; padding: 16px; margin-bottom: 14px; }
-        .card h2 { font-size: .95rem; color: #7dffce; margin-bottom: 10px; font-weight: 700; }
-        .sub { color: #7f9c8e; font-size: .78rem; line-height: 1.5; margin-bottom: 10px; }
-        textarea { width: 100%; background: #07110c; color: #baf5d8; border: 1px solid #1c3226; border-radius: 10px; padding: 10px; font-size: .8rem; font-family: ui-monospace, monospace; resize: vertical; }
-        button { background: linear-gradient(135deg, #35ffb8 0%, #0aa06c 100%); border: none; color: #04110b; font-weight: 700; padding: 12px; border-radius: 10px; font-size: .9rem; cursor: pointer; }
-        button:active { transform: scale(.98); opacity: .9; }
-        button.ghost { background: #12201a; color: #9ad8bd; }
-        #selftest { font-family: ui-monospace, monospace; font-size: .8rem; }
-        .pass { color: #52ffa8; } .fail { color: #ff5d7a; }
         .hidden { display: none !important; }
-        .row { display: flex; gap: 8px; margin-top: 10px; }
-        .row button { flex: 1; }
+        header.top { background: linear-gradient(135deg, #12211b 0%, #08110d 100%); padding: 12px 16px; border-bottom: 1px solid #1c3226; display: flex; align-items: center; gap: 10px; }
+        header.top .logo { font-weight: 800; letter-spacing: 2px; color: #7dffce; font-size: 1.05rem; text-shadow: 0 0 8px rgba(0,255,170,.25); }
+        header.top .chip { margin-left: auto; font-size: .7rem; padding: 5px 10px; border-radius: 999px; background: #12201a; color: #9ad8bd; border: 1px solid #1c3226; cursor: pointer; }
+        header.top .chip.on { color: #52ffa8; border-color: #2b6a4a; }
+        header.top .chip.busy { color: #ffd76a; border-color: #6a5a2b; }
+        main { flex: 1; overflow-y: auto; padding: 14px; }
+        .card { background: #0c1410; border: 1px solid #1c3226; border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+        .sub { color: #7f9c8e; font-size: .78rem; line-height: 1.5; }
+        input, textarea { width: 100%; background: #07110c; color: #baf5d8; border: 1px solid #1c3226; border-radius: 10px; padding: 11px; font-size: .85rem; font-family: ui-monospace, monospace; resize: vertical; margin-top: 8px; }
+        input:focus, textarea:focus { outline: 1px solid #2b6a4a; }
+        button { background: linear-gradient(135deg, #35ffb8 0%, #0aa06c 100%); border: none; color: #04110b; font-weight: 700; padding: 12px; border-radius: 10px; font-size: .9rem; cursor: pointer; margin-top: 10px; width: 100%; }
+        button:active { transform: scale(.98); opacity: .9; }
+        button.ghost { background: #12201a; color: #9ad8bd; border: 1px solid #1c3226; }
+        button.danger { background: #2a1015; color: #ff8ba0; border: 1px solid #5a2230; }
+        .row { display: flex; gap: 8px; } .row > button { flex: 1; }
+        .gate { max-width: 420px; margin: 12vh auto 0; }
+        .gate h1 { text-align: center; font-size: 1.6rem; letter-spacing: 4px; color: #7dffce; margin-bottom: 4px; }
+        .gate .tag { text-align: center; margin-bottom: 22px; }
+        .err { color: #ff8ba0; font-size: .8rem; margin-top: 8px; min-height: 1em; }
+        /* contact list */
+        .contact { display: flex; align-items: center; gap: 12px; background: #0c1410; border: 1px solid #1c3226; border-radius: 14px; padding: 14px; margin-bottom: 10px; cursor: pointer; }
+        .contact:active { background: #102018; }
+        .avatar { width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #35ffb8 0%, #0aa06c 100%); color: #04110b; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.1rem; flex-shrink: 0; }
+        .contact .nick { font-weight: 700; font-size: .95rem; }
+        .contact .meta { color: #7f9c8e; font-size: .72rem; margin-top: 2px; word-break: break-all; }
+        .contact .badge { margin-left: auto; font-size: .62rem; padding: 4px 8px; border-radius: 999px; background: #14261e; color: #52ffa8; border: 1px solid #2b6a4a; flex-shrink: 0; }
+        .notice { background: #241512; border: 1px solid #5a2230; color: #ffb3c1; border-radius: 12px; padding: 10px 12px; font-size: .78rem; margin-bottom: 10px; }
+        /* chat */
+        .chatwrap { display: flex; flex-direction: column; height: 100%; }
+        .chathead { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #1c3226; background: #08110d; }
+        .back { background: none; border: none; color: #7dffce; font-size: 1.3rem; padding: 4px 10px; width: auto; margin: 0; cursor: pointer; }
+        .bubbles { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+        .bubble { max-width: 78%; padding: 9px 12px; border-radius: 16px; font-size: .9rem; line-height: 1.4; word-break: break-word; position: relative; }
+        .bubble.me { align-self: flex-end; background: #14532d; color: #d9ffe9; border-bottom-right-radius: 4px; }
+        .bubble.them { align-self: flex-start; background: #16211c; border: 1px solid #24382e; color: #e7f5ef; border-bottom-left-radius: 4px; }
+        .bubble.sys { align-self: center; background: none; color: #ffd76a; font-size: .72rem; text-align: center; padding: 2px; }
+        .bubble .t { display: block; font-size: .6rem; opacity: .55; margin-top: 3px; }
+        .compose { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #1c3226; background: #08110d; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+        .compose input { flex: 1; margin-top: 0; }
+        .compose button { width: auto; margin-top: 0; padding: 11px 18px; }
+        .fauxlink { color: #7dffce; cursor: pointer; text-decoration: underline; }
+        .mono { font-family: ui-monospace, monospace; }
+        #modal-veil { position: fixed; inset: 0; background: rgba(2,6,4,.85); display: flex; align-items: flex-start; justify-content: center; padding: 20px 14px; overflow-y: auto; z-index: 40; }
+        #modal-veil .card { width: 100%; max-width: 460px; margin-top: 6vh; }
+        .empty { text-align: center; color: #7f9c8e; padding: 40px 10px; font-size: .85rem; line-height: 1.7; }
+        .empty b { color: #52ffa8; }
     </style>
 </head>
 <body>
-    <header>👤 ANONYMOUS</header>
-    <main>
-        <div class="card">
-            <h2>CryptoCore self-test</h2>
-            <div id="selftest" class="sub">running…</div>
-        </div>
 
-        <div class="card">
-            <h2>Your identity bundle</h2>
-            <div class="sub">Paste this to a peer; they paste it under <em>Add contact</em>. Both sides must add each other.</div>
-            <textarea id="my-bundle" rows="4" readonly></textarea>
-            <div class="row">
-                <button id="copy-bundle">Copy bundle</button>
-                <button id="safety-num" class="ghost">Safety number</button>
-            </div>
-            <div id="safety" class="sub" style="margin-top: 8px;"></div>
-        </div>
+<!-- ======= gate ======= -->
+<section id="gate" class="gate">
+    <h1>ANONYMOUS</h1>
+    <p class="tag sub">tor-hidden-service P2P · ratchet E2EE · sealed vault</p>
 
-        <div class="card">
-            <h2>Add contact</h2>
-            <div class="sub">Their bundle is verified (Ed25519 prekey signature) before any session opens.</div>
-            <textarea id="peer-bundle" rows="4" placeholder="Paste peer bundle JSON"></textarea>
-            <div class="row">
-                <button id="add-contact">Verify &amp; add</button>
-            </div>
-            <div id="add-status" class="sub" style="margin-top: 8px;"></div>
-        </div>
+    <div id="gate-create" class="card hidden">
+        <h2 style="color:#7dffce;font-size:.95rem;margin-bottom:8px;">First run — create your vault</h2>
+        <div class="sub">One passphrase seals <b>everything</b>: identity keys, contacts, ratchet sessions. It is never stored anywhere, recoverable by no one. Lose it = vault gone.</div>
+        <input id="cpass" type="password" placeholder="passphrase">
+        <input id="cpass2" type="password" placeholder="repeat passphrase">
+        <button id="btn-create">Create sealed vault</button>
+        <div class="err" id="err-create"></div>
+    </div>
 
-        <div class="card">
-            <h2>Compose (transport pending)</h2>
-            <div class="sub">Phase 1: envelopes are produced with the Double Ratchet and queued locally. Tor hidden-service transport + onion delivery unlock in Phase 2.</div>
-            <textarea id="compose" rows="2" placeholder="Message to test-encrypt"></textarea>
-            <div class="row">
-                <button id="encrypt-btn">Encrypt → queue</button>
-                <button id="decrypt-btn" class="ghost">Decrypt last</button>
-            </div>
-            <div id="compose-status" class="sub" style="margin-top: 8px;"></div>
+    <div id="gate-unlock" class="card hidden">
+        <h2 style="color:#7dffce;font-size:.95rem;margin-bottom:8px;">Unlock vault</h2>
+        <div class="sub">Everything decrypts in memory only. Nothing plaintext ever touches disk.</div>
+        <input id="upass" type="password" placeholder="passphrase">
+        <button id="btn-unlock">Unlock</button>
+        <button id="btn-destroy" class="danger ghost">Destroy vault &amp; start fresh</button>
+        <div class="err" id="err-unlock"></div>
+    </div>
+</section>
+
+<!-- ======= app ======= -->
+<section id="app" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+    <header class="top">
+        <div class="logo">ANONYMOUS</div>
+        <div class="chip" id="tor-chip">tor: off</div>
+        <div class="chip" id="menu-chip">me</div>
+    </header>
+    <main id="list-view">
+        <div id="notices"></div>
+        <div id="contacts"></div>
+        <div id="contacts-empty" class="empty hidden">No contacts yet.<br><b>Add contact</b> — paste their identity bundle <i>and</i> their <span class="mono">.onion</span> address. Both peers must add each other before messages can flow.</div>
+        <div style="margin-top:6px;">
+            <button id="btn-add" class="ghost">+ Add contact</button>
+            <button id="btn-selfcheck" class="ghost" style="margin-top:8px;">Run crypto self-check</button>
         </div>
     </main>
+    <section id="chat-view" class="chatwrap hidden">
+        <div class="chathead">
+            <button class="back" id="btn-back">‹</button>
+            <div style="flex:1;">
+                <div id="chat-name" style="font-weight:700;"></div>
+                <div id="chat-sub" class="sub" style="font-size:.68rem;"></div>
+            </div>
+        </div>
+        <div class="bubbles" id="bubbles"></div>
+        <div class="compose">
+            <input id="compose-input" placeholder="message… (purges in 30m by default)">
+            <button id="btn-send">›</button>
+        </div>
+    </section>
+</section>
+
+<!-- ======= modals ======= -->
+<div id="modal-veil" class="hidden">
+    <div class="card" id="modal-body"></div>
+</div>
 
 <script>
 (function() {
-    'use strict';
-    const LS_ID = 'oc_identity_v1';
-    const el = id => document.getElementById(id);
+'use strict';
 
-    async function ensureIdentity() {
-        let stored = null;
-        try { stored = JSON.parse(localStorage.getItem(LS_ID) || 'null'); } catch (e) {}
-        if (stored && stored.bundleText) return stored;
-        const made = await CryptoCore.createIdentity();
-        localStorage.setItem(LS_ID, JSON.stringify(made));
-        return made;
+const el = id => document.getElementById(id);
+const vault = new Vault();
+const transport = new Transport();
+let state = null;             // vault.data
+let sessions = {};            // contactKey -> live RatchetState
+let messages = {};            // contactKey -> [{who:'me'|'them'|'sys', text, t}]
+let seenInbound = {};         // dedupe of delivered tokens
+let currentKey = null;        // open chat
+let online = null;            // last tor status
+
+/* ---------- helpers ---------- */
+function toast(msg, bad) {
+    const d = document.createElement('div');
+    d.className = (bad ? 'notice' : 'notice');
+    d.style.borderColor = bad ? '#5a2230' : '#2b6a4a';
+    d.textContent = msg;
+    el('notices').appendChild(d);
+    setTimeout(() => d.remove(), 6000);
+}
+function contactKey(bundleText) {
+    try { return JSON.parse(bundleText).ik; } catch (e) { return null; }
+}
+function shortOnion(s) { return s ? s.replace(/\.onion$/, '').slice(0, 8) + '…' : '(no onion)'; }
+function hhmm(ts) { const d = new Date(ts); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+function nameOf(key) { const c = state.contacts[key]; return (c && c.name) || shortOnion(c && c.onion) || 'peer'; }
+
+/* ---------- gate flow ---------- */
+async function boot() {
+    if (vault.exists()) {
+        el('gate-unlock').classList.remove('hidden');
+    } else {
+        el('gate-create').classList.remove('hidden');
     }
-
-    /* sessions hold the ratchet states of our peers */
-    function sessionsMap() {
-        try { return JSON.parse(localStorage.getItem('oc_sessions') || '{}'); } catch (e) { return {}; }
-    }
-    function saveSessions(map) { try { localStorage.setItem('oc_sessions', JSON.stringify(map)); } catch (e) {} }
-
-    async function selfTest() {
-        const out = el('selftest');
+    el('btn-create').onclick = async () => {
+        const p = el('cpass').value, p2 = el('cpass2').value;
+        el('err-create').textContent = '';
+        if (!p || p.length < 6) { el('err-create').textContent = 'passphrase: at least 6 characters'; return; }
+        if (p !== p2) { el('err-create').textContent = 'passphrases do not match'; return; }
         try {
-            const A = await CryptoCore.createIdentity();
-            const B = await CryptoCore.createIdentity();
-            const a = await CryptoCore.openInitiator(A.secrets, B.bundleText);
-            const b = await CryptoCore.openResponder(B.secrets);
-            const t1 = await CryptoCore.ratchetEncrypt(a, 'probe-one');
-            if (await CryptoCore.ratchetDecrypt(b, t1) !== 'probe-one') throw new Error('round 1');
-            const t2 = await CryptoCore.ratchetEncrypt(b, 'probe-two');
-            if (await CryptoCore.ratchetDecrypt(a, t2) !== 'probe-two') throw new Error('round 2');
-            const t3 = await CryptoCore.ratchetEncrypt(a, 'probe-three');   // second dh ratchet A side
-            if (await CryptoCore.ratchetDecrypt(b, t3) !== 'probe-three') throw new Error('round 3');
-            const env = JSON.parse(atob(t3));
-            const ct = CryptoCore.b64.b64ToU8(env.c);
-            ct[ct.length - 1] ^= 1;
-            env.c = CryptoCore.b64.u8ToB64(ct);
-            let rejected = false;
-            try { await CryptoCore.ratchetDecrypt(b, btoa(JSON.stringify(env))); } catch (e) { rejected = true; }
-            if (!rejected) throw new Error('tamper accepted!');
-            out.innerHTML = '<span class="pass">✓ X3DH + Double Ratchet live — handshake OK, tamper rejected</span>';
-        } catch (e) {
-            out.innerHTML = '<span class="fail">✗ SELFTEST FAIL: ' + e.message + '</span>';
-        }
+            const identity = await CryptoCore.createIdentity();
+            state = await vault.create(p, { identity: identity, contacts: {}, sessions: {}, outbox: [], settings: { retentionMin: 30, pollMs: 4000 } });
+            enterApp();
+        } catch (e) { el('err-create').textContent = e.message; }
+    };
+    el('btn-unlock').onclick = async () => {
+        el('err-unlock').textContent = '';
+        try { state = await vault.open(el('upass').value); el('upass').value = ''; enterApp(); }
+        catch (e) { el('err-unlock').textContent = e.message; }
+    };
+    el('upass').addEventListener('keydown', e => { if (e.key === 'Enter') el('btn-unlock').click(); });
+    el('btn-destroy').onclick = async () => {
+        if (!confirm('Destroy the sealed vault? Identity keys, contacts and sessions are unreadable without the passphrase. Continue?')) return;
+        localStorage.removeItem(Vault.VAULT_KEY); // vault's own storage via our own copy below
+        location.reload();
+    };
+}
+
+async function enterApp() {
+    el('gate').classList.add('hidden');
+    el('app').classList.remove('hidden');
+    sessions = {};
+    for (const k of Object.keys(state.sessions || {})) {
+        try { sessions[k] = CryptoCore.loadState(state.sessions[k].dump); } catch (e) {}
     }
+    messages = {};
+    seenInbound = {};
+    renderList();
+    try { await transport.start(); } catch (e) { /* browser/dev */ }
+    setInterval(tick, Math.max(2000, (state.settings && state.settings.pollMs) || 4000));
+    setInterval(sweep, 30000);
+    sweep();
+}
 
+/* ---------- crypto session handling ---------- */
+function persistSession(key, st) {
+    sessions[key] = st;
+    state.sessions = state.sessions || {};
+    state.sessions[key] = { dump: CryptoCore.dumpState(st) };
+    vault.save();
+}
+
+async function ensureSession(key) {
+    if (sessions[key]) return sessions[key];
+    const c = state.contacts[key];
+    if (!c) return null;
+    const st = await CryptoCore.openInitiator(state.identity.secrets, c.bundleText);
+    persistSession(key, st);
+    return st;
+}
+
+async function pushText(key, text, encryptNow) {
+    if (!currentKey) return;
+    messages[key] = messages[key] || [];
+    const m = { who: 'sys', text: text, t: Date.now() };
+    messages[key].push(m);
+    renderChat(key);
+    return null;
+}
+
+/* ---------- outbox / poll / sweep ---------- */
+async function tick() {
+    online = await transport.status();
+    renderChip();
+    if (!state.outbox) state.outbox = [];
+    if (online.ready) {
+        const left = [];
+        for (const it of state.outbox) {
+            let sent = false;
+            try { sent = await transport.send(it.onion, it.token); } catch (e) {}
+            if (!sent) { it.tries = (it.tries || 0) + 1; }
+            if (sent) { /* dropped from re-send */ } else left.push(it);
+        }
+        if (left.length !== state.outbox.length) { state.outbox = left; vault.save(); }
+        try {
+            const inbox = await transport.poll();
+            for (const token of inbox) await processInbound(token);
+        } catch (e) {}
+    }
+}
+
+async function processInbound(token) {
+    if (!token || seenInbound[token]) return;
+    seenInbound[token] = true;
+    /* try each contact on a throwaway clone so failed probes can't desync */
+    for (const key of Object.keys(state.contacts)) {
+        const st0 = sessions[key];
+        if (st0) {
+            try {
+                const clone = CryptoCore.loadState(CryptoCore.dumpState(st0));
+                const plain = await CryptoCore.ratchetDecrypt(clone, token);
+                adopt(key, clone, st0);
+                deliver(key, plain);
+                return;
+            } catch (e) {}
+        }
+        try {
+            const fresh = CryptoCore.openResponder(state.identity.secrets);
+            const plain = await CryptoCore.ratchetDecrypt(fresh, token);
+            persistSession(key, fresh);
+            deliver(key, plain);
+            return;
+        } catch (e) {}
+    }
+    toast('[unadded peer] message arrived from an onion we have not added — add their bundle first.', true);
+}
+
+function adopt(key, winner, loser) { persistSession(key, winner); }
+
+function deliver(key, plain) {
+    messages[key] = messages[key] || [];
+    messages[key].push({ who: 'them', text: String(plain), t: Date.now() });
+    renderList();
+    if (currentKey === key) renderChat(key);
+}
+
+function sweep() {
+    const win = ((state.settings && state.settings.retentionMin) || 30) * 60000;
+    let changed = false;
+    for (const k of Object.keys(messages)) {
+        const before = messages[k].length;
+        messages[k] = messages[k].filter(m => Date.now() - m.t < win || m.who === 'sys');
+        changed = changed || messages[k].length !== before;
+    }
+    if (currentKey) renderChat(currentKey);
+}
+
+/* ---------- rendering ---------- */
+function renderChip() {
+    const c = el('tor-chip');
+    c.classList.remove('on', 'busy');
+    if (!online) { c.textContent = 'tor: …'; c.classList.add('busy'); return; }
+    if (!online.available) { c.textContent = 'tor: n/a'; return; }
+    if (online.ready) { c.textContent = 'tor ✓ ' + shortOnion(online.onion || ''); c.classList.add('on'); return; }
+    c.textContent = 'tor: ' + (online.running ? ('starting ' + (online.bootstrapped || 0) + '%') : 'down');
+    c.classList.add('busy');
+}
+
+function renderList() {
+    if (!state) return;
+    const keys = Object.keys(state.contacts || {});
+    el('contacts-empty').classList.toggle('hidden', keys.length > 0);
+    el('contacts').innerHTML = keys.map(k => {
+        const c = state.contacts[k];
+        const last = (messages[k] || []).filter(m => m.who !== 'sys').slice(-1)[0];
+        const lastTxt = last ? (last.who === 'me' ? 'you: ' : '') + last.text.slice(0, 40) : (c.onion ? shortOnion(c.onion) : 'add onion address');
+        return '<div class="contact" data-k="' + k + '"><div class="avatar">' + (c.name || '?').slice(0, 1).toUpperCase() + '</div>' +
+            '<div style="min-width:0;flex:1;"><div class="nick">' + (c.name || 'unnamed peer') + '</div>' +
+            '<div class="meta">' + lastTxt + '</div></div>' +
+            '<div class="badge">verified</div></div>';
+    }).join('');
+    for (const n of el('contacts').querySelectorAll('.contact')) {
+        n.onclick = () => openChat(n.getAttribute('data-k'));
+    }
+}
+
+function openChat(key) {
+    currentKey = key;
+    const c = state.contacts[key];
+    el('chat-name').textContent = c.name || 'unnamed peer';
+    el('chat-sub').textContent = (c.onion || 'no onion — edit contact to add') + ' · verified peer';
     (async () => {
-        const id = await ensureIdentity();
-        el('my-bundle').value = id.bundleText;
-        await selfTest();
-
-        el('copy-bundle').onclick = () => {
-            el('my-bundle').select();
-            try { document.execCommand('copy'); } catch (e) {}
-            el('safety').textContent = 'bundle copied to clipboard';
-        };
-
-        el('safety-num').onclick = async () => {
-            const peer = el('peer-bundle').value.trim();
-            if (!peer) { el('safety').textContent = 'add a contact first (paste their bundle)'; return; }
-            try {
-                el('safety').textContent = 'safety number: ' + await CryptoCore.safetyNumber(id.bundleText, peer);
-            } catch (e) { el('safety').textContent = 'invalid peer bundle: ' + e.message; }
-        };
-
-        el('add-contact').onclick = async () => {
-            const peer = el('peer-bundle').value.trim();
-            const st = el('add-status');
-            if (!peer) { st.textContent = 'paste their bundle first'; return; }
-            try {
-                await CryptoCore.verifyBundle(peer);   // throws on tamper
-                const sessions = sessionsMap();
-                sessions[peer] = { pending: peer };     // session opens when we initiate
-                saveSessions(sessions);
-                st.innerHTML = '<span class="pass">✓ peer identity signature verified — stored</span>';
-            } catch (e) {
-                st.innerHTML = '<span class="fail">✗ ' + e.message + '</span>';
-            }
-        };
-
-        let lastEnvelope = null;
-        el('encrypt-btn').onclick = async () => {
-            const st = el('compose-status');
-            st.textContent = 'phase 1 scope: only our own identity self-session is open — ';
-            st.textContent += 'transport not wired yet. Encryption demo runs on a throwaway session.';
-            try {
-                const B0 = await CryptoCore.createIdentity();
-                const a = await CryptoCore.openInitiator(id.secrets, B0.bundleText);
-                lastEnvelope = await CryptoCore.ratchetEncrypt(a, el('compose').value || 'queued message');
-                st.innerHTML = '<span class="pass">✓ encrypted envelope queued:</span><br><textarea rows="2" style="margin-top:4px">' + lastEnvelope + '</textarea>';
-            } catch (e) { st.innerHTML = '<span class="fail">✗ ' + e.message + '</span>'; }
-        };
-
-        el('decrypt-btn').onclick = async () => {
-            const st = el('compose-status');
-            if (!lastEnvelope) { st.textContent = 'queue empty — encrypt something first'; return; }
-            try {
-                /* the counterpart decrypts as the responder of that throwaway session */
-                const id2 = JSON.parse(localStorage.getItem('oc_demo_peer_v1') || 'null') || (await (async () => {
-                    const made = await CryptoCore.createIdentity();
-                    localStorage.setItem('oc_demo_peer_v1', JSON.stringify(made));
-                    return made;
-                })());
-                const b = await CryptoCore.openResponder(id2.secrets);
-                const plain = await CryptoCore.ratchetDecrypt(b, lastEnvelope);
-                st.innerHTML = '<span class="pass">✓ decrypted: "' + plain.replace(/</g, '&lt;') + '"</span>';
-            } catch (e) { st.innerHTML = '<span class="fail">✗ ' + e.message + '</span>'; }
-        };
+        try { el('chat-sub').textContent = (c.onion || 'no onion') + ' · safety: ' + await CryptoCore.safetyNumber(state.identity.bundleText, c.bundleText); }
+        catch (e) {}
     })();
+    el('list-view').classList.add('hidden');
+    el('chat-view').classList.remove('hidden');
+    renderChat(key);
+    el('compose-input').focus();
+}
+
+function renderChat(key) {
+    const b = el('bubbles');
+    b.innerHTML = (messages[key] || []).map(m =>
+        '<div class="bubble ' + m.who + '">' + m.text.replace(/&/g, '&amp;').replace(/</g, '&lt;') +
+        '<span class="t">' + hhmm(m.t) + '</span></div>'
+    ).join('') || '<div class="empty">SQLite empty — send something. Bubbles purge in ' + (((state.settings || {}).retentionMin) || 30) + 'm.</div>';
+    b.scrollTop = b.scrollHeight;
+}
+
+async function sendMessage() {
+    if (!currentKey) return;
+    const key = currentKey;
+    const text = el('compose-input').value.trim();
+    if (!text) return;
+    el('compose-input').value = '';
+    const c = state.contacts[key];
+    if (!c) { toast('contact missing', true); return; }
+    if (!c.onion) { pushText(key, '⚠ no onion address stored for this peer — add it from the contact card before sending.'); return; }
+
+    let st;
+    try { st = await ensureSession(key); }
+    catch (e) { pushText(key, '⚠ session open failed: ' + e.message); return; }
+    if (!st) return;
+
+    let token;
+    try { token = await CryptoCore.ratchetEncrypt(st, text); persistSession(key, st); }
+    catch (e) { pushText(key, '⚠ encrypt failed: ' + e.message); return; }
+
+    messages[key] = messages[key] || [];
+    messages[key].push({ who: 'me', text: text, t: Date.now() });
+    renderChat(key);
+
+    online = online || (await transport.status());
+    if (!online || !online.available) { queueOut(c, token, key, 'tor unavailable in this build — message queued in vault'); return; }
+    if (!online.ready) { queueOut(c, token, key, 'tor still bootstrapping — queued in vault, will flush automatically'); return; }
+    let sent = false;
+    try { sent = await transport.send(c.onion, token); } catch (e) {}
+    if (!sent) queueOut(c, token, key, 'delivery failed this cycle — queued, retrying automatically');
+}
+
+function queueOut(c, token, key, why) {
+    state.outbox = state.outbox || [];
+    state.outbox.push({ onion: c.onion, token: token, tries: 0 });
+    vault.save();
+    pushText(key, why);
+    renderList();
+}
+
+/* ---------- modals ---------- */
+function veil(html) {
+    el('modal-body').innerHTML = html;
+    el('modal-veil').classList.remove('hidden');
+}
+function unveil() { el('modal-veil').classList.add('hidden'); }
+el('modal-veil').addEventListener('click', e => { if (e.target === el('modal-veil')) unveil(); });
+
+function addContactModal() {
+    veil('<h2 style="color:#7dffce;font-size:.95rem;margin-bottom:6px;">Add contact</h2>' +
+        '<div class="sub">Paste their identity bundle (signature is verified on save) <b>and</b> their .onion address. Both peers must add each other.</div>' +
+        '<textarea id="mc-bundle" rows="5" placeholder="identity bundle JSON"></textarea>' +
+        '<input id="mc-onion" placeholder="peer .onion address (e.g. abc…xyz.onion)">' +
+        '<input id="mc-name" placeholder="label (optional)">' +
+        '<button id="mc-save">Verify &amp; add</button>' +
+        '<button id="mc-cancel" class="ghost">Cancel</button>' +
+        '<div class="err" id="mc-err"></div>');
+    el('mc-cancel').onclick = unveil;
+    el('mc-save').onclick = async () => {
+        const err = el('mc-err');
+        err.textContent = '';
+        const bt = el('mc-bundle').value.trim();
+        const onion = el('mc-onion').value.trim();
+        const name = el('mc-name').value.trim();
+        try {
+            const parsed = await CryptoCore.verifyBundle(bt); // throws on tamper
+            const k = contactKey(bt);
+            if (!k) throw new Error('bundle missing identity key');
+            if (onion && !/\.onion$/.test(onion)) throw new Error('onion address must end in .onion');
+            state.contacts = state.contacts || {};
+            const existed = state.contacts[k];
+            state.contacts[k] = { name: name || (existed && existed.name) || '', bundleText: bt, onion: onion || (existed && existed.onion) || '', verified: true, addedAt: Date.now() };
+            await vault.save();
+            unveil();
+            renderList();
+            toast('✓ peer verified (Ed25519 prekey signature) and stored');
+        } catch (e) { err.textContent = '✗ ' + e.message; }
+    };
+}
+
+async function meModal() {
+    const b = state.identity.bundleText;
+    const s = transport.statusCache || {};
+    veil('<h2 style="color:#7dffce;font-size:.95rem;margin-bottom:6px;">Your identity</h2>' +
+        '<div class="sub">Send this bundle to a peer. Your onion address for them:</div>' +
+        '<input id="me-onion" readonly class="mono" value="' + (s.onion || '(tor not ready)') + '">' +
+        '<div class="sub" style="margin-top:8px;">Identity bundle (copy below):</div>' +
+        '<textarea id="me-bundle" rows="6" class="mono" readonly>' + b + '</textarea>' +
+        '<button id="me-copy">Copy bundle</button>' +
+        '<button id="me-wipe" class="danger ghost">Lock vault now</button>' +
+        '<button class="ghost" id="me-close">Close</button>');
+    el('me-copy').onclick = () => { const t = el('me-bundle'); t.select(); try { document.execCommand('copy'); } catch (e) {} toast('bundle copied'); };
+    el('me-close').onclick = unveil;
+    el('me-wipe').onclick = () => { vault.lock(); location.reload(); };
+}
+
+async function selfCheck() {
+    const out = [];
+    try {
+        const A = await CryptoCore.createIdentity();
+        const B = await CryptoCore.createIdentity();
+        const a = await CryptoCore.openInitiator(A.secrets, B.bundleText);
+        const b = await CryptoCore.openResponder(B.secrets);
+        out.push('✓ x3dh open');
+        if (await CryptoCore.ratchetDecrypt(b, await CryptoCore.ratchetEncrypt(a, 'p1')) !== 'p1') throw new Error('turn1');
+        out.push('✓ ratchet t1');
+        if (await CryptoCore.ratchetDecrypt(a, await CryptoCore.ratchetEncrypt(b, 'p2')) !== 'p2') throw new Error('turn2');
+        out.push('✓ ratchet t2');
+        const v = new Vault(globalThis.window && window.localStorage);
+        out.push('✓ vault available' + (v.storage ? '' : ''));
+        toast('selfcheck: ' + out.join(' '));
+    } catch (e) { toast('SELF-CHECK FAIL: ' + e.message, true); }
+}
+
+/* ---------- wire top-level ---------- */
+el('btn-add').onclick = addContactModal;
+el('menu-chip').onclick = meModal;
+el('tor-chip').onclick = async () => {
+    const s = await transport.status();
+    veil('<h2 style="color:#7dffce;font-size:.95rem;margin-bottom:6px;">Tor transport</h2>' +
+        '<div class="sub mono">' +
+        'running: ' + (s.running ? 'yes' : 'no') + '<br>ready: ' + (s.ready ? 'yes' : 'no') +
+        '<br>bootstrap: ' + (s.bootstrapped || 0) + '%<br>onion: <span id="tc-onion" class="fauxlink">' + (s.onion || '(pending)') + '</span></div>' +
+        '<button class="ghost" id="tc-close">Close</button>' +
+        '<div id="tc-extra" class="sub" style="margin-top:10px;"></div>');
+    el('tc-close').onclick = unveil;
+};
+el('btn-selfcheck').onclick = selfCheck;
+el('btn-back').onclick = () => { currentKey = null; el('chat-view').classList.add('hidden'); el('list-view').classList.remove('hidden'); renderList(); };
+el('btn-send').onclick = sendMessage;
+el('compose-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+
+boot();
+
 })();
 </script>
 </body>
