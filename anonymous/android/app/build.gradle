@@ -41,8 +41,10 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
-    /* Phase 3: embedded tor daemon + socks control (libtor.so ships inside the APK) */
-    implementation 'info.guardianproject:tor-android:0.4.9.13.2'
+    /* Phase 3: embedded tor daemon + socks control (libtor.so ships inside the APK).
+     * Pin 0.4.9.6 — newest tor-android line that accepts compileSdk 36
+     * (0.4.9.8+ build with minCompileSdk=37). */
+    implementation 'info.guardianproject:tor-android:0.4.9.6'
 }
 
 /* libtor.so must be extracted to disk so ProcessBuilder can exec it from nativeLibraryDir */
