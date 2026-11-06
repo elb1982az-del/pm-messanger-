@@ -21,6 +21,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Locale;
 
 /**
  * Anonymous — JS↔native Tor bridge (Phase 3).
@@ -179,7 +180,7 @@ public class TorBridge extends Plugin {
                         int contentLength = 0;
                         String ln;
                         while ((ln = br.readLine()) != null && !ln.isEmpty()) {
-                            String low = ln.toLowerCase(StandardCharsets.US_ASCII);
+                            String low = ln.toLowerCase(Locale.US);
                             if (low.startsWith("content-length:")) {
                                 try { contentLength = Integer.parseInt(ln.substring(ln.indexOf(':') + 1).trim()); }
                                 catch (NumberFormatException nf) { contentLength = 0; }
