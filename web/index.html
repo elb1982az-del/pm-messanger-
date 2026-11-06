@@ -218,19 +218,33 @@
     }
 
     let __pmBulk = false;                                          // true while a catch-up replay renders (stay silent)
+    const pmBridge = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PMBridge) || null;
+    let PM_SVC = false;                                            // true once the native watchdog bridge answers
+    function bridgeSync() {
+        if (!pmBridge) return;
+        try {
+            pmBridge.sync({
+                lastIndex: cursor, deviceId: deviceId, hidden: document.hidden,
+                notifyOn: PM_NOTIFY, ring: PM_RING,
+                relayUrl: RELAY_URL, key: KEY
+            }).then(() => { PM_SVC = true; }).catch(() => {});
+        } catch (e) { /* native side unavailable (browser/PWA context) */ }
+    }
     function incomingAlert(preview) {
         if (!PM_NOTIFY || PM_RING === 'off') return;
-        const hidden = document.hidden;
-        if (hidden && nativeNotify()) {
-            // Native system notification (channel sound = bundled pm_ding.wav for 'pm')
-            const opts = {
-                id: Date.now() % 2000000000,
-                title: 'P/M',
-                body: preview || 'New message',
-                autoCancel: true
-            };
-            if (PM_RING === 'pm') opts.sound = 'pm_ding';
-            nativeNotify().schedule({ notifications: [opts] }).catch(() => {});
+        if (document.hidden) {
+            if (PM_SVC) return;                                    // native watchdog owns background alerts — no dupes
+            const pn = nativeNotify();
+            if (!pn) return;
+            pn.schedule({
+                notifications: [{
+                    id: Date.now() % 2000000000,
+                    title: 'P/M',
+                    body: preview || 'New message',
+                    autoCancel: true,
+                    ...(PM_RING === 'pm' ? { sound: 'pm_ding' } : {})
+                }]
+            }).catch(() => {});
         } else {
             beepPattern(PM_RING);                                  // audible even when the app is on screen
         }
@@ -273,6 +287,8 @@
             document.getElementById('chat').classList.remove('hidden');
             setupMediaPermissions();
             requestNotifyPermission();
+            if (pmBridge) { try { pmBridge.startWatching().catch(() => {}); } catch (e) {} }
+            bridgeSync();
             setInterval(poll, 2000);
             setInterval(purgeExpired, 5000);
             purgeExpired();
@@ -436,6 +452,7 @@
             }
             cursor = data.last_index;                          // everything ≤ last_index is now handled
             localStorage.setItem('pm_cursor', String(cursor));
+            bridgeSync();                                      // stream cursor/settings to the native watchdog
         } catch (e) { setNet(false, (e && (e.name + ': ' + e.message)) || String(e)); }
     }
 
