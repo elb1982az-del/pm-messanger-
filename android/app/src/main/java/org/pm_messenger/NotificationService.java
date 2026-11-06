@@ -7,6 +7,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.IBinder;
 import android.util.Base64;
 import android.util.Log;
 
@@ -48,6 +49,9 @@ public class NotificationService extends Service {
     private volatile boolean running = false;
     private Thread worker;
     private int alertId = 3000;
+
+    @Override
+    public IBinder onBind(Intent intent) { return null; }          // started service, not a bound one
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
