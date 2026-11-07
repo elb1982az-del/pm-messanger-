@@ -481,6 +481,7 @@ el('tor-chip').onclick = async () => {
         '<br>bootstrap: ' + (s.bootstrapped || 0) + '%<br>onion: ' + (s.onion || '(pending)') +
         '<br>daemon: ' + (s.execVia ? par(s.execVia) : "(not exec'd this session)") +
         '<br>stage: ' + par(s.stage || '(never requested)') +
+        (s.mode ? '<br>bridge: ' + par(s.mode) : '') +
         attemptTxt + '</div>' +
         (s.error ? '<div class="err mono">' + par(s.error) + '</div>' : '') +
         (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><textarea rows="6" readonly class="mono" style="font-size:.68rem;">' + par(s.log) + '</textarea>' : '') +
