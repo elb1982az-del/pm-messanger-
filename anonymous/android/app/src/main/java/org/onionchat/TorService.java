@@ -441,7 +441,7 @@ public class TorService extends Service {
         }
     }
 
-    private static void writeTorrc(File torDir, File hsDir, File dataDir, File logF, int attempt) throws Exception {
+    private void writeTorrc(File torDir, File hsDir, File dataDir, File logF, int attempt) throws Exception {
         StringBuilder sb = new StringBuilder();
         sb.append("# Anonymous - attempt ").append(attempt).append("/").append(MAX_ATTEMPTS).append('\n');
         sb.append("RunAsDaemon 0\n");
