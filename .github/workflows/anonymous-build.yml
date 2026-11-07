@@ -42,6 +42,19 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build obfs4proxy native libs (dx-style vendoring, pure-Go static)
+        if: always()
+        run: |
+          echo "===== STEP: obfs4proxy (Go) =====" >> "$PM_LOG"
+          git clone --depth 1 https://gitlab.com/yawning/obfs4.git /tmp/obfs4 >> "$PM_LOG" 2>&1 || { echo "obfs4 clone failed (optional; rung-1 unaffected)" >> "$PM_LOG"; exit 0; }
+          cd /tmp/obfs4/obfs4proxy
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/anonymous/android/app/src/main/jniLibs/arm64-v8a/libobfs4proxy.so" . >> "$PM_LOG" 2>&1 || echo "obfs4 arm64 build failed (optional)" >> "$PM_LOG"
+          CGO_ENABLED=0 GOOS=android GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/anonymous/android/app/src/main/jniLibs/armeabi-v7a/libobfs4proxy.so" . >> "$PM_LOG" 2>&1 || echo "obfs4 armv7 build failed (optional)" >> "$PM_LOG"
+
       - name: Install npm packages
         working-directory: anonymous
         run: |

@@ -463,6 +463,13 @@ public class TorService extends Service {
         } else {
             sb.append("# rung-1: full egress, compiled-in fallback list\n");
         }
+        /* pluggable transport (same dx-style vendoring): tor spawns this itself
+         * from nativeLibraryDir — exec-legal like libtor.so. Bridge lines plug
+         * in later (Phase 4); the plugin line is inert without UseBridges. */
+        final File obfs4Bin = new File(getApplicationInfo().nativeLibraryDir, "libobfs4proxy.so");
+        if (attempt >= 2 && obfs4Bin.exists() && obfs4Bin.canRead()) {
+            sb.append("ClientTransportPlugin obfs4 exec ").append(obfs4Bin.getAbsolutePath()).append("\n");
+        }
         /* hard-coded 2026 fallback directory mirrors — "/8-diverse subset" of
          * the official fallback_dirs.inc (dirport 9030 on each). Tried BEFORE
          * the compiled-in list, giving directory connectivity fresh peers even

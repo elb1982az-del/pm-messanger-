@@ -7,8 +7,8 @@ namespace = "org.onionchat"
         applicationId "org.private.anonymous"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "0.3.0"
+        versionCode 5
+        versionName "0.3.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -28,7 +28,6 @@ repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
     }
-    maven { url 'https://raw.githubusercontent.com/guardianproject/gpmaven/master' }
 }
 
 dependencies {
@@ -41,10 +40,15 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
-    /* Phase 3: embedded tor daemon + socks control (libtor.so ships inside the APK).
-     * Pin 0.4.9.6 — newest tor-android line that accepts compileSdk 36
-     * (0.4.9.8+ build with minCompileSdk=37). */
-    implementation 'info.guardianproject:tor-android:0.4.9.6'
+    /* Phase 3 rev2 (0.3.1): tor + obfs4proxy are VENDORED as native libraries in
+     * src/main/jniLibs/<abi>/ (same strategy as dx Anonymous Messenger):
+     *   jniLibs/arm64-v8a/libtor.so          (tor 0.4.9.6 daemon, from
+     *                                         guardianproject tor-android AAR)
+     *   jniLibs/armeabi-v7a/libtor.so
+     *   jniLibs/<abi>/libobfs4proxy.so       (built in CI with Go, pure static)
+     * The installer extracts them into nativeLibraryDir with exec permission —
+     * exec() is legal there on every Android version, no chmod/W^X dance.
+     * No maven artifact needed at build time anymore. */
 }
 
 /* libtor.so must be extracted to disk so ProcessBuilder can exec it from nativeLibraryDir */
