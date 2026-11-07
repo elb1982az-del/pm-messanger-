@@ -202,7 +202,8 @@ public class TorBridge extends Plugin {
 
     /* ---------------- local inbox HTTP listener ---------------- */
 
-    private static void startHttpListener(Context ctx) {
+    /* Control plane owner. (package-private: TorService also starts it) */
+    static void startHttpListener(Context ctx) {
         if (listenerStarted) return;
         listenerStarted = true;
         final Context appCtx = (ctx instanceof android.content.Context) ? ctx.getApplicationContext() : null;
@@ -279,10 +280,10 @@ public class TorBridge extends Plugin {
                                     Intent i = new Intent(c, TorService.class);
                                     if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i);
                                     startHttpListener(c);
-                                } catch (Throwable t) {
+                                } catch (Throwable te) {
                                     TorService.State.stage = "start-denied";
-                                    TorService.State.lastError = "http /start: " + t;
-                                    rbody = "{\"error\":" + json(String.valueOf(t)) + "}";
+                                    TorService.State.lastError = "http /start: " + te;
+                                    rbody = "{\"error\":" + json(String.valueOf(te)) + "}";
                                 }
                             }
                         } else if (reqLine.startsWith("POST /send") && !payload.isEmpty()) {
@@ -294,7 +295,7 @@ public class TorBridge extends Plugin {
                                 rbody = "{\"sent\":false,\"error\":\"bad onion or payload\"}";
                             } else {
                                 boolean sent = false; String sErr = "";
-                                try { sent = socksPost(onion, body2); } catch (Throwable t) { sErr = String.valueOf(t); }
+                                try { sent = socksPost(onion, body2); } catch (Throwable te) { sErr = String.valueOf(te); }
                                 rbody = sent ? "{\"sent\":true}"
                                         : "{\"sent\":false,\"error\":" + json(sErr) + "}";
                             }
