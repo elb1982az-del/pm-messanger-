@@ -44,10 +44,21 @@ public class TorBridge extends Plugin {
 
     @PluginMethod
     public void startTor(PluginCall call) {
-        Context c = getContext();
-        Intent i = new Intent(c, TorService.class);
-        if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i);
-        startHttpListener();
+        try {
+            TorService.State.stage = "start-requested";
+            Context c = getContext();
+            Intent i = new Intent(c, TorService.class);
+            if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i);
+        } catch (Throwable t) {
+            /* FGS-start denials (e.g. startForegroundService from background on
+             * Android 12+) surfaced instead of silently swallowed */
+            TorService.State.stage = "start-denied";
+            TorService.State.lastError = "startTor failed: " + t;
+        }
+        try { startHttpListener(); } catch (Throwable t) {
+            TorService.State.lastError += (TorService.State.lastError.isEmpty() ? "" : " | ")
+                    + "http listener: " + t;
+        }
         call.resolve();
     }
 
@@ -61,6 +72,7 @@ public class TorBridge extends Plugin {
         r.put("socks", TorService.State.socksLive);
         r.put("error", TorService.State.lastError == null ? "" : TorService.State.lastError);
         r.put("execVia", TorService.State.execVia == null ? "" : TorService.State.execVia);
+        r.put("stage", TorService.State.stage == null ? "" : TorService.State.stage);
         r.put("attempt", TorService.State.attempt);
         r.put("clockSkew", TorService.State.clockSkew);
         String log;

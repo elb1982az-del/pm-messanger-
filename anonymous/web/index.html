@@ -195,7 +195,7 @@ async function enterApp() {
     messages = {};
     seenInbound = {};
     renderList();
-    try { await transport.start(); } catch (e) { /* browser/dev */ }
+    try { await transport.start(); } catch (e) { toast('tor start failed: ' + (e && e.message || e), true); }
     setInterval(tick, Math.max(2000, (state.settings && state.settings.pollMs) || 4000));
     setInterval(sweep, 30000);
     sweep();
@@ -479,7 +479,8 @@ el('tor-chip').onclick = async () => {
         'running: ' + (s.running ? 'yes' : 'no') + '<br>ready: ' + (s.ready ? 'yes' : 'no') +
         '<br>socks: ' + (s.socks ? 'up (9050)' : 'down') +
         '<br>bootstrap: ' + (s.bootstrapped || 0) + '%<br>onion: ' + (s.onion || '(pending)') +
-        '<br>daemon: ' + (s.execVia ? par(s.execVia) : '(not exec\'d this session)') +
+        '<br>daemon: ' + (s.execVia ? par(s.execVia) : "(not exec'd this session)") +
+        '<br>stage: ' + par(s.stage || '(never requested)') +
         attemptTxt + '</div>' +
         (s.error ? '<div class="err mono">' + par(s.error) + '</div>' : '') +
         (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><textarea rows="6" readonly class="mono" style="font-size:.68rem;">' + par(s.log) + '</textarea>' : '') +

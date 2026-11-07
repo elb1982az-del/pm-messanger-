@@ -50,6 +50,7 @@ Transport.prototype.status = async function() {
             socks: !!(r && r.socks),
             error: (r && r.error) || '',
             execVia: (r && r.execVia) || '',
+            stage: (r && r.stage) || '',
             attempt: (r && r.attempt) || 0,
             clockSkew: !!(r && r.clockSkew),
             log: (r && r.log) || ''

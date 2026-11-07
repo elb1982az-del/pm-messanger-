@@ -59,6 +59,11 @@ public class TorService extends Service {
         public static volatile String streamTail = "";
         public static volatile String execVia = "";
         public static volatile boolean clockSkew = false;
+        /* lifecycle stage: set on every meaningful step so a silent death is
+         * visible from the chip (start-request → asset-extract → chmod →
+         * exec-probe → spawned → bootstrapping …). "start-requested" is set by
+         * TorBridge.startTor BEFORE the service intent is even fired. */
+        public static volatile String stage = "idle";
         public static volatile int attempt = 0;
         public static volatile int epoch = 0;
         public static volatile long attemptStartAt = 0L;
@@ -166,7 +171,18 @@ public class TorService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (torProc == null || !isAlive(torProc)) { ladderExhausted = false; spawnTor(); }
+        try {
+            if (torProc == null || !isAlive(torProc)) {
+                ladderExhausted = false;
+                spawnTor();
+            }
+        } catch (Throwable t) {
+            /* visible instead of killing the whole process */
+            State.running = false;
+            State.stage = "onStartCommand-crashed";
+            State.lastError = "onStartCommand: " + t
+                    + (t.getCause() != null ? " (" + t.getCause() + ")" : "");
+        }
         return START_STICKY;
     }
 
@@ -185,7 +201,8 @@ public class TorService extends Service {
     }
 
     private void spawnTor() {
-        if (ladderExhausted) return;
+        State.stage = "spawn-entered";
+        if (ladderExhausted) { State.stage = "ladder-exhausted"; return; }
 
         final File torDir = new File(getFilesDir(), "tor");
         final File binDir = new File(torDir, "bin");
@@ -206,6 +223,7 @@ public class TorService extends Service {
         final File privBin = new File(binDir, "libtor.so");
 
         File assetSrc = null;
+        State.stage = "asset-lookup";
         try {
             String assetName = null;
             for (String abi : Build.SUPPORTED_ABIS) {
@@ -231,6 +249,7 @@ public class TorService extends Service {
         String execPath = null;
 
         /* candidate 1 (primary): private-dir copy + explicit chmod 700 */
+        State.stage = "copying-into-filesDir";
         try {
             boolean needCopy = !privBin.exists() || privBin.length() != copySrc.length();
             if (needCopy) {
@@ -242,6 +261,7 @@ public class TorService extends Service {
                 fout.close(); fin.close();
             }
             /* exec bit: File API first, then explicit chmod via Runtime shell */
+            State.stage = "chmod-700";
             privBin.setReadable(true, false);
             privBin.setWritable(true, false);
             boolean viaApi = privBin.setExecutable(true, false);
@@ -266,6 +286,7 @@ public class TorService extends Service {
         }
 
         /* candidate 2: vendored nativeLibraryDir copy (exec-legal by packaging) */
+        if (execPath == null) State.stage = "trying-nativeLibraryDir";
         if (execPath == null && nativeLib.exists() && nativeLib.canRead()) {
             try {
                 Process probe = new ProcessBuilder(nativeLib.getAbsolutePath(), "-f", "/dev/null").start();
@@ -280,6 +301,7 @@ public class TorService extends Service {
 
         if (execPath == null) {
             State.running = false;
+            State.stage = "exec-blocked";
             State.lastError = "EXEC BLOCKED — filesDir (chmod 700) AND nativeLibraryDir both denied." +
                     " On stock Android 10+ the filesDir path needs permissive SELinux (Magisk: setenforce 0 or a magiskpolicy exec rule)." +
                     " " + lastExecDenial;
@@ -300,6 +322,7 @@ public class TorService extends Service {
         final int myAttempt = State.attempt;
 
         try { if (logF.exists()) logF.delete(); } catch (Throwable ignored) {}
+        State.stage = "writing-torrc";
         try { writeTorrc(torDir, hsDir, dataDir, logF, myAttempt); }
         catch (Throwable t) { State.running = false; State.lastError = "torrc write failed: " + t; return; }
 
@@ -307,6 +330,7 @@ public class TorService extends Service {
         final String torBinPath = execPath;
 
         State.running = true;
+        State.stage = "tor-spawned:" + (execPath.startsWith(getFilesDir().getAbsolutePath()) ? "files-dir" : "native-lib-dir");
         synchronized (State.logTail) { State.logTail.setLength(0); }
 
         final TorService self = this;
