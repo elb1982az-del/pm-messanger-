@@ -15,7 +15,16 @@
         .hidden { display: none !important; }
         header.top { background: linear-gradient(135deg, #12211b 0%, #08110d 100%); padding: 12px 16px; border-bottom: 1px solid #1c3226; display: flex; align-items: center; gap: 10px; }
         header.top .logo { font-weight: 800; letter-spacing: 2px; color: #7dffce; font-size: 1.05rem; text-shadow: 0 0 8px rgba(0,255,170,.25); }
-        header.top .chip { margin-left: auto; font-size: .7rem; padding: 5px 10px; border-radius: 999px; background: #12201a; color: #9ad8bd; border: 1px solid #1c3226; cursor: pointer; }
+        header.top .chip { margin-left: auto; font-size: .7rem; padding: 5px 10px; border-radius: 999px; background: #12201a; color: #9ad8bd; border: 1px solid #1c3226; cursor: pointer;
+            touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; position: relative; z-index: 2; min-height: 30px; min-width: 34px; }
+        /* explicit touch-target box for the bundle (replaces the readonly textarea:
+         * Chromium selection layers on long-value textareas swallow later taps) */
+        .bundlebox { width: 100%; background: #07110c; color: #baf5d8; border: 1px solid #1c3226; border-radius: 10px;
+            padding: 11px; font-size: .8rem; font-family: ui-monospace, monospace; margin-top: 8px;
+            white-space: pre-wrap; word-break: break-all; max-height: 38vh; overflow-y: auto; touch-action: pan-y;
+            -webkit-user-select: text; user-select: text; -webkit-tap-highlight-color: transparent; }
+        #app, header.top { -webkit-user-select: none; user-select: none; }
+        input, .bundlebox { -webkit-user-select: text; user-select: text; }
         header.top .chip.on { color: #52ffa8; border-color: #2b6a4a; }
         header.top .chip.busy { color: #ffd76a; border-color: #6a5a2b; }
         main { flex: 1; overflow-y: auto; padding: 14px; }
@@ -437,14 +446,59 @@ async function meModal() {
     veil('<h2 style="color:#7dffce;font-size:.95rem;margin-bottom:6px;">Your identity</h2>' +
         '<div class="sub">Send this bundle to a peer. Your onion address for them:</div>' +
         '<input id="me-onion" readonly class="mono" value="' + (s.onion || '(tor not ready)') + '">' +
-        '<div class="sub" style="margin-top:8px;">Identity bundle (copy below):</div>' +
-        '<textarea id="me-bundle" rows="6" class="mono" readonly>' + b + '</textarea>' +
+        '<div class="sub" style="margin-top:8px;">Identity bundle (copy with the button — no manual selection needed):</div>' +
+        '<div id="me-bundle" class="bundlebox" role="textbox" aria-readonly="true">' + esc(b) + '</div>' +
         '<button id="me-copy">Copy bundle</button>' +
         '<button id="me-wipe" class="danger ghost">Lock vault now</button>' +
         '<button class="ghost" id="me-close">Close</button>');
-    el('me-copy').onclick = () => { const t = el('me-bundle'); t.select(); try { document.execCommand('copy'); } catch (e) {} toast('bundle copied'); };
+    bindTap(el('me-copy'), () => copyText(b, 'bundle copied'));
     el('me-close').onclick = unveil;
     el('me-wipe').onclick = () => { vault.lock(); location.reload(); };
+}
+
+function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* Copy with the proper cascade: async Clipboard API → hidden-input execCommand
+ * → honest failure toast (never silently "copied"). Chromium webviews on some
+ * builds lack navigator.clipboard for http://localhost — the fallback covers it. */
+async function copyText(txt, okMsg) {
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(txt);
+            toast(okMsg); return;
+        }
+    } catch (e) { /* fall through */ }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = txt;
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        if (ok) { toast(okMsg); return; }
+        throw new Error('execCommand returned false');
+    } catch (e) {
+        toast('copy failed — long-press the onion field or share the bundle text manually', true);
+    }
+}
+
+/* Explicit touch-target binding. On webviews with a live text-selection layer,
+ * `click` dispatch can be swallowed even while touch events fire; bind BOTH and
+ * de-duplicate (touchend suppresses the follow-up click within 400ms). */
+function bindTap(elm, fn) {
+    let touchFired = 0;
+    elm.addEventListener('touchend', ev => {
+        touchFired = Date.now();
+        ev.preventDefault();
+        fn(ev);
+    }, { passive: false });
+    elm.addEventListener('click', ev => {
+        if (Date.now() - touchFired < 400) return;   // activated via touch already
+        fn(ev);
+    });
 }
 
 async function selfCheck() {
@@ -468,7 +522,10 @@ async function selfCheck() {
 /* ---------- wire top-level ---------- */
 el('btn-add').onclick = addContactModal;
 el('menu-chip').onclick = meModal;
-el('tor-chip').onclick = async () => {
+bindTap(el('menu-chip'), meModal);
+el('tor-chip').onclick = async () => { await openTorModal(); };
+bindTap(el('tor-chip'), openTorModal);
+async function openTorModal() {
     const s = await transport.status();
     const par = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const attemptTxt = (s.attempt && s.bootstrapped < 100 && !s.ready)
@@ -484,7 +541,7 @@ el('tor-chip').onclick = async () => {
         (s.mode ? '<br>bridge: ' + par(s.mode) : '') +
         attemptTxt + '</div>' +
         (s.error ? '<div class="err mono">' + par(s.error) + '</div>' : '') +
-        (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><textarea rows="6" readonly class="mono" style="font-size:.68rem;">' + par(s.log) + '</textarea>' : '') +
+        (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><div class="bundlebox" style="font-size:.68rem;max-height:30vh;">' + par(s.log) + '</div>' : '') +
         '<button class="ghost" id="tc-close">Close</button>' +
         '<button class="ghost" id="tc-restart">Restart tor</button>');
     el('tc-close').onclick = unveil;
