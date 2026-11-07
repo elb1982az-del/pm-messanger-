@@ -42,16 +42,32 @@ public class TorBridge extends Plugin {
     private static final int MAX_INBOX = 256;
     private static volatile boolean listenerStarted = false;
 
-    @PluginMethod
-    public void startTor(PluginCall call) {
+    /**
+     * Explicit daemon trigger, callable from ANY layer (Application, Activity)
+     * without going through the JS bridge. Sets State.stage so the chip shows
+     * the request happened even if the service never comes up.
+     */
+    public static void kickStart(Context c) {
         try {
             TorService.State.stage = "start-requested";
-            Context c = getContext();
             Intent i = new Intent(c, TorService.class);
             if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i);
         } catch (Throwable t) {
-            /* FGS-start denials (e.g. startForegroundService from background on
-             * Android 12+) surfaced instead of silently swallowed */
+            TorService.State.stage = "start-denied";
+            if (t instanceof android.app.ForegroundServiceStartNotAllowedException
+                    || (t.getCause() != null && t.getCause() instanceof android.app.ForegroundServiceStartNotAllowedException)) {
+                TorService.State.lastError = "startTor denied (FGS start not allowed from this state): " + t;
+            } else {
+                TorService.State.lastError = "startTor failed: " + t;
+            }
+        }
+    }
+
+    @PluginMethod
+    public void startTor(PluginCall call) {
+        try {
+            kickStart(getContext());
+        } catch (Throwable t) {
             TorService.State.stage = "start-denied";
             TorService.State.lastError = "startTor failed: " + t;
         }
