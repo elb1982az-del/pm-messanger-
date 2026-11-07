@@ -172,6 +172,10 @@ public class TorService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         try {
+            /* control plane for the UI (0.3.7): /status /start /send /poll on
+             * 127.0.0.1:9878 — the webview can reach this port with plain
+             * fetch(), no Capacitor bridge needed. */
+            TorBridge.startHttpListener(getApplicationContext());
             if (torProc == null || !isAlive(torProc)) {
                 ladderExhausted = false;
                 spawnTor();

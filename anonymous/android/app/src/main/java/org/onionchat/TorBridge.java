@@ -71,7 +71,7 @@ public class TorBridge extends Plugin {
             TorService.State.stage = "start-denied";
             TorService.State.lastError = "startTor failed: " + t;
         }
-        try { startHttpListener(); } catch (Throwable t) {
+        try { startHttpListener(getContext()); } catch (Throwable t) {
             TorService.State.lastError += (TorService.State.lastError.isEmpty() ? "" : " | ")
                     + "http listener: " + t;
         }
@@ -202,9 +202,10 @@ public class TorBridge extends Plugin {
 
     /* ---------------- local inbox HTTP listener ---------------- */
 
-    private static void startHttpListener() {
+    private static void startHttpListener(Context ctx) {
         if (listenerStarted) return;
         listenerStarted = true;
+        final Context appCtx = (ctx instanceof android.content.Context) ? ctx.getApplicationContext() : null;
         final Thread t = new Thread(() -> {
             try {
                 ServerSocket srv = new ServerSocket(HTTP_PORT, 128, InetAddress.getLoopbackAddress());
@@ -232,18 +233,99 @@ public class TorBridge extends Plugin {
                             if (n < 0) break;
                             got += n;
                         }
-                        String resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
-                        OutputStream os = s.getOutputStream();
-                        os.write(resp.getBytes(StandardCharsets.US_ASCII));
-                        os.flush();
-                        close(s);
+                        final String payload = new String(body, 0, got);
+                        /* ---- dispatch (0.3.7) ----
+                         * The hidden service must deliver POST /p (peer traffic).
+                         * Everything else is the local control plane the UI can
+                         * reach with a plain fetch() from the webview — no
+                         * Capacitor bridge required. CORS * + short answers. */
+                        final String CORSP = "Access-Control-Allow-Origin: *\r\n"
+                                + "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+                                + "Access-Control-Allow-Headers: *\r\n";
+                        String rbody = "ok";
+                        boolean handledPeer = false;
                         if (reqLine.startsWith("POST /p ")) {
-                            String payload = new String(body, 0, got);
                             synchronized (TorService.State.inboxLock) {
                                 TorService.State.inbox.addFirst(payload);
                                 while (TorService.State.inbox.size() > MAX_INBOX) TorService.State.inbox.pollLast();
                             }
+                            handledPeer = true;
+                        } else if (reqLine.startsWith("GET /status")) {
+                            StringBuilder sb = new StringBuilder("{");
+                            sb.append("\"running\":").append(TorService.State.running);
+                            sb.append(",\"ready\":").append(TorService.State.ready);
+                            sb.append(",\"bootstrapped\":").append(TorService.State.bootstrapped);
+                            sb.append(",\"onion\":").append(json(TorService.State.onion));
+                            sb.append(",\"socks\":").append(TorService.State.socksLive);
+                            sb.append(",\"error\":").append(json(TorService.State.lastError));
+                            sb.append(",\"execVia\":").append(json(TorService.State.execVia));
+                            sb.append(",\"stage\":").append(json(TorService.State.stage));
+                            sb.append(",\"attempt\":").append(TorService.State.attempt);
+                            sb.append(",\"clockSkew\":").append(TorService.State.clockSkew);
+                            String log;
+                            synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
+                            if (TorService.State.streamTail != null && TorService.State.streamTail.length() > 0)
+                                log = TorService.State.streamTail + "\n---\n" + log;
+                            if (log.length() > 1400) log = log.substring(log.length() - 1400);
+                            sb.append(",\"log\":").append(json(log));
+                            sb.append("}");
+                            rbody = sb.toString();
+                        } else if (reqLine.startsWith("GET /start")) {
+                            TorService.State.stage = "start-requested";
+                            Context c = appCtx;
+                            if (c == null) { rbody = "{\"error\":\"no context\"}"; }
+                            else {
+                                try {
+                                    Intent i = new Intent(c, TorService.class);
+                                    if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i);
+                                    startHttpListener(c);
+                                } catch (Throwable t) {
+                                    TorService.State.stage = "start-denied";
+                                    TorService.State.lastError = "http /start: " + t;
+                                    rbody = "{\"error\":" + json(String.valueOf(t)) + "}";
+                                }
+                            }
+                        } else if (reqLine.startsWith("POST /send") && !payload.isEmpty()) {
+                            /* body format: "<onion>\n<payload>" — mirror of sendMessage */
+                            int cut = payload.indexOf('\n');
+                            String onion = cut > 0 ? payload.substring(0, cut).trim() : "";
+                            String body2 = cut > 0 ? payload.substring(cut + 1) : "";
+                            if (!onion.endsWith(".onion") || body2.length() == 0 || body2.length() > MAX_PAYLOAD) {
+                                rbody = "{\"sent\":false,\"error\":\"bad onion or payload\"}";
+                            } else {
+                                boolean sent = false; String sErr = "";
+                                try { sent = socksPost(onion, body2); } catch (Throwable t) { sErr = String.valueOf(t); }
+                                rbody = sent ? "{\"sent\":true}"
+                                        : "{\"sent\":false,\"error\":" + json(sErr) + "}";
+                            }
+                        } else if (reqLine.startsWith("GET /poll")) {
+                            StringBuilder sb = new StringBuilder("{\"inbox\":[");
+                            boolean first = true;
+                            synchronized (TorService.State.inboxLock) {
+                                String item;
+                                while ((item = TorService.State.inbox.pollLast()) != null) {
+                                    if (!first) sb.append(",");
+                                    sb.append(json(item));
+                                    first = false;
+                                }
+                            }
+                            sb.append("]}");
+                            rbody = sb.toString();
+                        } else if (reqLine.startsWith("OPTIONS ")) {
+                            rbody = "";
                         }
+                        if (!handledPeer) {
+                            byte[] rb = rbody.getBytes(StandardCharsets.UTF_8);
+                            String resp = "HTTP/1.1 200 OK\r\n" + CORSP
+                                    + "Content-Type: application/json\r\n"
+                                    + "Content-Length: " + rb.length + "\r\n"
+                                    + "Connection: close\r\n\r\n";
+                            OutputStream os = s.getOutputStream();
+                            os.write(resp.getBytes(StandardCharsets.US_ASCII));
+                            if (rb.length > 0) os.write(rb);
+                            os.flush();
+                        }
+                        close(s);
                     } catch (Throwable oneConn) {
                         close(s);
                     }
@@ -255,6 +337,24 @@ public class TorBridge extends Plugin {
         }, "anon-http-9878");
         t.setDaemon(true);
         t.start();
+    }
+
+    /* Minimal JSON string encoder for the local control plane. */
+    private static String json(String in) {
+        if (in == null) return "\"\"";
+        StringBuilder b = new StringBuilder(in.length() + 2);
+        b.append('"');
+        for (int i = 0; i < in.length(); i++) {
+            char c = in.charAt(i);
+            if (c == '"' || c == '\\') { b.append('\\').append(c); }
+            else if (c == '\n') { b.append("\\n"); }
+            else if (c == '\r') { b.append("\\r"); }
+            else if (c == '\t') { b.append("\\t"); }
+            else if (c < 0x20) { b.append(String.format("\\u%04x", (int) c)); }
+            else b.append(c);
+        }
+        b.append('"');
+        return b.toString();
     }
 
     private static void close(Socket s) {

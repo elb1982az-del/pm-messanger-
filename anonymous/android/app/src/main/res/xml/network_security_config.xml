@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Control plane: the UI talks to the local Tor HTTP listener on the
+         loopback interface with plain fetch(). Cleartext is restricted to
+         127.0.0.1/localhost only — all real traffic still runs through the
+         SOCKS5/hidden-service tunnels above. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

@@ -41,10 +41,17 @@ function Transport() {
  *   none  : plain browser page — no native bridge was injected            */
 Transport.prototype.detect = function() {
     var cap = global.Capacitor;
-    if (!cap) { this.mode = 'none'; return null; }
-    var p = cap.Plugins && cap.Plugins[PLUGIN];
-    if (p && typeof p.status === 'function') { this.mode = 'proxy'; return p; }
-    if (typeof cap.nativePromise === 'function') { this.mode = 'native'; return null; }
+    if (cap) {
+        var p = cap.Plugins && cap.Plugins[PLUGIN];
+        if (p && typeof p.status === 'function') { this.mode = 'proxy'; return p; }
+        if (typeof cap.nativePromise === 'function') { this.mode = 'native'; return null; }
+    }
+    /* 0.3.7 control-plane fallback: the local HTTP listener on 127.0.0.1:9878
+     * (the hidden service's delivery port) answers GET /status, GET /start,
+     * POST /send and GET /poll with CORS *. It is owned by TorService itself,
+     * so it is alive whenever the daemon service is — independent of any
+     * Capacitor bridge injection problem in this webview. */
+    if (global.fetch) { this.mode = 'http'; return null; }
     this.mode = 'none';
     return null;
 };
@@ -54,14 +61,28 @@ Transport.prototype.available = function() {
     return this.mode !== 'none';
 };
 
-/* Unified invoke: method proxy if a plugin object exists, nativePromise otherwise. */
+/* Unified invoke: method proxy if a plugin object exists, nativePromise otherwise,
+ * then the loopback HTTP control plane (port 9878) as the cross-check channel. */
 Transport.prototype.call = async function(method, args) {
+    args = args || {};
     var p = this.detect();
-    if (this.mode === 'proxy' && p) return p[method](args || {});
+    if (this.mode === 'proxy' && p) return p[method](args);
     if (this.mode === 'native') {
-        var r = await global.Capacitor.nativePromise(PLUGIN, method, args || {});
+        var r = await global.Capacitor.nativePromise(PLUGIN, method, args);
         // nativePromise may return undefined/null for void methods (startTor)
         return r || {};
+    }
+    if (this.mode === 'http') {
+        var path = { startTor: '/start', status: '/status', pollInbox: '/poll', sendMessage: '/send' }[method];
+        if (!path) throw new Error('no http control route for ' + method);
+        var isPost = path === '/send';
+        var ctl = await fetch('http://127.0.0.1:9878' + path, {
+            method: isPost ? 'POST' : 'GET',
+            body: isPost ? (args.onion + '\n' + args.payload) : undefined,
+            signal: global.AbortSignal ? global.AbortSignal.timeout(8000) : undefined
+        });
+        var txt = await ctl.text();
+        return txt ? JSON.parse(txt) : {};
     }
     throw new Error('tor bridge unavailable (runtime: no native bridge injected)');
 };
