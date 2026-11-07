@@ -197,62 +197,94 @@ public class TorService extends Service {
         binDir.mkdirs();
 
         /* ---- rung 0: find an EXECUTABLE form of the daemon ----
-         * Android 10+ blocks exec() from app-writable dirs for targetSdk>=29 apps,
-         * so the primary path must be nativeLibraryDir. On custom ROMs (NetHunter,
-         * Magisk permissive SELinux) that can STILL be denied — then we copy the
-         * daemon into our private dir, chmod 0700 there, and exec that instead. */
+         * Explicit dx/benissa-style extraction (user-directed): copy the binary
+         * INTO the app's private data dir (getFilesDir()), chmod 700 explicitly
+         * (Runtime + File API both attempted), then exec that copy primary.
+         * Android 10+ stock W^X blocks filesDir exec for targetSdk>=29, so the
+         * vendored nativeLibraryDir copy remains as the second candidate. */
         final File nativeLib = new File(getApplicationInfo().nativeLibraryDir, "libtor.so");
-        if (!nativeLib.exists() || !nativeLib.canRead()) {
-            State.running = false;
-            State.lastError = "libtor.so missing/unreadable at " + nativeLib.getAbsolutePath();
-            return;
-        }
+        final File privBin = new File(binDir, "libtor.so");
 
+        File assetSrc = null;
+        try {
+            String assetName = null;
+            for (String abi : Build.SUPPORTED_ABIS) {
+                if (abi.startsWith("arm64")) { assetName = "tor/libtor.arm64.so"; break; }
+                if (abi.startsWith("armeabi")) { assetName = "tor/libtor.armv7.so"; break; }
+                if (abi.startsWith("x86_64")) { assetName = "tor/libtor.x64.so"; break; }
+                if (abi.startsWith("x86")) { assetName = "tor/libtor.x86.so"; break; }
+            }
+            if (assetName != null) {
+                java.io.InputStream ais = getAssets().open(assetName);
+                assetSrc = new File(torDir, "asset-src.so");
+                FileOutputStream fos = new FileOutputStream(assetSrc);
+                byte[] buf = new byte[1 << 16];
+                int rn;
+                while ((rn = ais.read(buf)) > 0) fos.write(buf, 0, rn);
+                fos.close(); ais.close();
+            }
+        } catch (Throwable ignored) { assetSrc = null; }
+
+        /* pick the executable source: prefer packaged asset, else nativeLibraryDir copy */
+        final File copySrc = (assetSrc != null && assetSrc.length() > 0) ? assetSrc : nativeLib;
         String lastExecDenial = "";
         String execPath = null;
-        /* candidate 1: nativeLibraryDir (legal for targetSdk>=29).
-         * disposable liveness probe: tor with /dev/null config exits immediately. */
+
+        /* candidate 1 (primary): private-dir copy + explicit chmod 700 */
         try {
-            Process probe = new ProcessBuilder(nativeLib.getAbsolutePath(), "-f", "/dev/null").start();
-            try { probe.destroy(); } catch (Throwable ignored) {}
-            execPath = nativeLib.getAbsolutePath();
-        } catch (Throwable t) {
-            lastExecDenial = "nativeLibraryDir exec denied: " + t + (t.getCause() != null ? " (" + t.getCause() + ")" : "");
-        }
-        /* candidate 2: app-private copy, chmod'ed executable (permissive ROMs) */
-        if (execPath == null) {
-            File privBin = new File(binDir, "libtor.so");
+            boolean needCopy = !privBin.exists() || privBin.length() != copySrc.length();
+            if (needCopy) {
+                FileInputStream fin = new FileInputStream(copySrc);
+                FileOutputStream fout = new FileOutputStream(privBin);
+                byte[] buf = new byte[1 << 16];
+                int n;
+                while ((n = fin.read(buf)) > 0) fout.write(buf, 0, n);
+                fout.close(); fin.close();
+            }
+            /* exec bit: File API first, then explicit chmod via Runtime shell */
+            privBin.setReadable(true, false);
+            privBin.setWritable(true, false);
+            boolean viaApi = privBin.setExecutable(true, false);
+            boolean viaChmod = false;
+            Process chmod = null;
             try {
-                if (!privBin.exists() || privBin.length() != nativeLib.length()) {
-                    FileInputStream fin = new FileInputStream(nativeLib);
-                    FileOutputStream fout = new FileOutputStream(privBin);
-                    byte[] buf = new byte[1 << 16];
-                    int n;
-                    while ((n = fin.read(buf)) > 0) fout.write(buf, 0, n);
-                    fout.close(); fin.close();
-                }
-                privBin.setReadable(true, false);
-                privBin.setWritable(true, false);
-                if (!privBin.setExecutable(true, false)) {
-                    lastExecDenial += " | chmod app-dir binary failed (File API)";
-                }
-                try {
-                    Process probe2 = new ProcessBuilder(privBin.getAbsolutePath(), "-f", "/dev/null").start();
-                    try { probe2.destroy(); } catch (Throwable ignored) {}
-                    execPath = privBin.getAbsolutePath();
-                } catch (Throwable t2) {
-                    lastExecDenial += " | app-dir exec denied: " + t2;
-                }
-            } catch (Throwable tc) {
-                lastExecDenial += " | copy to app dir failed: " + tc;
+                chmod = Runtime.getRuntime().exec(new String[]{"chmod", "700", privBin.getAbsolutePath()});
+                int rc = 0; try { rc = chmod.waitFor(); } catch (InterruptedException ie) {}
+                viaChmod = (rc == 0);
+            } catch (Throwable ignoredT) {}
+            String why = "copy:filesDir(chmod" + (viaChmod ? "700-ok" : (viaApi ? "api" : "FAILED")) + ")";
+            try {
+                Process probe = new ProcessBuilder(privBin.getAbsolutePath(), "-f", "/dev/null").start();
+                try { probe.destroy(); } catch (Throwable ignoredP) {}
+                execPath = privBin.getAbsolutePath();
+                State.execVia = why;
+            } catch (Throwable probeT) {
+                lastExecDenial = "filesDir exec denied even after chmod: " + probeT + (probeT.getCause() != null ? " (" + probeT.getCause() + ")" : "");
+            }
+        } catch (Throwable tc) {
+            lastExecDenial = "filesDir copy/chmod failed: " + tc;
+        }
+
+        /* candidate 2: vendored nativeLibraryDir copy (exec-legal by packaging) */
+        if (execPath == null && nativeLib.exists() && nativeLib.canRead()) {
+            try {
+                Process probe = new ProcessBuilder(nativeLib.getAbsolutePath(), "-f", "/dev/null").start();
+                try { probe.destroy(); } catch (Throwable ignoredP) {}
+                execPath = nativeLib.getAbsolutePath();
+                State.execVia = "vendored:nativeLibraryDir";
+            } catch (Throwable t) {
+                lastExecDenial += " | nativeLibraryDir exec denied: " + t;
             }
         }
+        if (assetSrc != null) { try { assetSrc.delete(); } catch (Throwable ignored) {} }
+
         if (execPath == null) {
             State.running = false;
-            State.lastError = "EXEC BLOCKED — neither nativeLibraryDir nor app dir allows exec on this ROM. " + lastExecDenial;
+            State.lastError = "EXEC BLOCKED — filesDir (chmod 700) AND nativeLibraryDir both denied." +
+                    " On stock Android 10+ the filesDir path needs permissive SELinux (Magisk: setenforce 0 or a magiskpolicy exec rule)." +
+                    " " + lastExecDenial;
             return;
         }
-        State.execVia = execPath;
 
         State.attempt++;
         State.epoch++;
