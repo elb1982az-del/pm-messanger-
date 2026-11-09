@@ -125,11 +125,12 @@ Transport.prototype.status = function() {
     }.bind(this));
 };
 
-/* One attempt. Returns true only if the POST was delivered through tor. */
+/* One attempt. Returns the full result {sent, error?} — not just the bool —
+ * so the UI can surface the native failure reason (socks rep, timeout, …). */
 Transport.prototype.send = function(onion, wireToken) {
-    if (!this.available()) return Promise.reject(new Error('tor bridge unavailable'));
+    if (!this.available()) return Promise.resolve({ sent: false, error: 'tor bridge unavailable' });
     return this.call('sendMessage', { onion: onion, payload: wireToken })
-        .then(function(r) { return !!(r && r.sent); });
+        .then(function(r) { return { sent: !!(r && r.sent), error: (r && r.error) || '' }; });
 };
 
 /* Drain the native inbox buffer. Returns array of wire tokens (order kept). */

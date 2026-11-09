@@ -250,15 +250,21 @@ async function tick() {
     if (online.ready) {
         const left = [];
         for (const it of state.outbox) {
-            let sent = false;
-            try { sent = await transport.send(it.onion, it.token); } catch (e) {}
-            if (!sent) { it.tries = (it.tries || 0) + 1; }
-            if (sent) { /* dropped from re-send */ } else left.push(it);
+            const r = await transport.send(it.onion, it.token).catch(e => ({ sent: false, error: String(e && e.message || e) }));
+            if (r.sent) { /* delivered — drop from queue */ }
+            else {
+                it.tries = (it.tries || 0) + 1;
+                left.push(it);
+                if (it.tries % 4 === 0) pushText(it.key, '⚠ delivery attempt ' + it.tries + ' failed: ' + (r.error ? r.error : 'no report from native send (peer hidden service unreachable?)'), true);
+            }
         }
         if (left.length !== state.outbox.length) { state.outbox = left; vault.save(); }
         try {
             const inbox = await transport.poll();
-            for (const token of inbox) await processInbound(token);
+            for (const token of inbox) {
+                if (typeof token === 'string' && token.indexOf('loopback:') === 0) continue;   // self-test probes never enter the ratchet path
+                await processInbound(token);
+            }
         } catch (e) {}
     }
 }
@@ -393,14 +399,18 @@ async function sendMessage() {
     online = online || (await transport.status());
     if (!online || !online.available) { queueOut(c, token, key, 'tor unavailable in this build — message queued in vault'); return; }
     if (!online.ready) { queueOut(c, token, key, 'tor still bootstrapping — queued in vault, will flush automatically'); return; }
-    let sent = false;
-    try { sent = await transport.send(c.onion, token); } catch (e) {}
-    if (!sent) queueOut(c, token, key, 'delivery failed this cycle — queued, retrying automatically');
+    const r = await transport.send(c.onion, token).catch(e => ({ sent: false, error: String(e && e.message || e) }));
+    if (r.sent) { /* delivered */ }
+    else {
+        const why = r.error ? ('delivery failed: ' + r.error + ' — queued, retrying automatically')
+                            : 'delivery failed this cycle — queued, retrying automatically';
+        queueOut(c, token, key, why);
+    }
 }
 
 function queueOut(c, token, key, why) {
     state.outbox = state.outbox || [];
-    state.outbox.push({ onion: c.onion, token: token, tries: 0 });
+    state.outbox.push({ onion: c.onion, token: token, tries: 0, key: key });
     vault.save();
     pushText(key, why);
     renderList();
@@ -549,9 +559,19 @@ async function openTorModal() {
         (s.error ? '<div class="err mono">' + par(s.error) + '</div>' : '') +
         (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><div class="bundlebox" style="font-size:.68rem;max-height:30vh;">' + par(s.log) + '</div>' : '') +
         '<button class="ghost" id="tc-close">Close</button>' +
-        '<button class="ghost" id="tc-restart">Restart tor</button>');
+        '<button class="ghost" id="tc-restart">Restart tor</button>' +
+        '<button class="ghost" id="tc-loopback">Loopback self-test</button>');
     el('tc-close').onclick = unveil;
     el('tc-restart').onclick = async () => { try { await transport.start(); toast('tor restart requested'); } catch (e) { toast('restart failed: ' + e.message, true); } unveil(); };
+    el('tc-loopback').onclick = async () => {
+        const own = (await transport.status()).onion;
+        if (!own) { toast('no onion yet — wait for tor ✓ first', true); return; }
+        const marker = 'LB' + Date.now();
+        toast('loopback: sending to own onion…');
+        const r = await transport.send(own, 'loopback:' + marker).catch(e => ({ sent: false, error: String(e && e.message || e) }));
+        if (r.sent) toast('✓ loopback full path OK (socks → tor → own hidden service → local inbox)');
+        else toast('✗ loopback failed: ' + (r.error || 'unknown'), true);
+    };
 };;
 el('btn-selfcheck').onclick = selfCheck;
 el('btn-back').onclick = () => { currentKey = null; el('chat-view').classList.add('hidden'); el('list-view').classList.remove('hidden'); renderList(); };
