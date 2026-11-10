@@ -176,7 +176,21 @@ public class TorBridge extends Plugin {
 
             /* reply head: ver, rep, rsv, atyp */
             byte[] head = readFully(is, 4);
-            if (head[1] != 0) throw new Exception("socks connect failed (rep " + (head[1] & 0xff) + ")");
+            if (head[1] != 0) {
+                int rep = head[1] & 0xff;
+                String rn = rep == 1 ? " general failure (circuit/rendezvous failed)"
+                        : rep == 2 ? " not allowed"
+                        : rep == 3 ? " network unreachable"
+                        : rep == 4 ? " host unreachable"
+                        : rep == 5 ? " connection refused"
+                        : rep == 6 ? " TTL expired"
+                        : rep == 7 ? " command not supported"
+                        : rep == 8 ? " address type not supported" : "";
+                throw new Exception("socks connect failed (rep " + rep + rn + ")"
+                        + " | local 9878: " + localListenerLiveness()
+                        + " | rung: " + TorService.State.attempt
+                        + (hsLogVerdict().isEmpty() ? "" : " | HS log: " + hsLogVerdict()));
+            }
             int atyp = head[3] & 0xff;
             int addrLen = (atyp == 1) ? 4 : (atyp == 3) ? (readFully(is, 1)[0] & 0xff) : 16;
             readFully(is, addrLen + 2);      // addr + port, discarded
@@ -214,6 +228,49 @@ public class TorBridge extends Plugin {
                 if (line.indexOf("SocksPort") >= 0 || line.indexOf("Failed to bind") >= 0
                         || line.indexOf("Address already in use") >= 0 || line.indexOf("Opening Socks") >= 0
                         || line.indexOf("Failed to open") >= 0) {
+                    hits.add(line.trim());
+                    if (hits.size() > 4) hits.remove(0);
+                }
+            }
+            r.close();
+            if (hits.isEmpty()) return "";
+            StringBuilder sb = new StringBuilder();
+            for (String h : hits) sb.append(h).append(" ;; ");
+            String out = sb.toString();
+            if (out.length() > 320) out = out.substring(out.length() - 320);
+            return out;
+        } catch (Throwable ignored) { return ""; }
+    }
+
+    /* Hidden-service side verdicts for rep-1 diagnosis:
+     *  - localListenerLiveness(): is our local 9878 target actually accepting?
+     *  - hsLogVerdict(): latest hidden-service lifecycle lines from tor.log. */
+    private static String localListenerLiveness() {
+        Socket p = new Socket();
+        try {
+            p.connect(new InetSocketAddress("127.0.0.1", HTTP_PORT), 800);
+            p.close();
+            return "listening";
+        } catch (Throwable t) {
+            try { p.close(); } catch (Throwable ignored) {}
+            return "DOWN (" + t + ")";
+        }
+    }
+
+    private static String hsLogVerdict() {
+        try {
+            String path = TorService.State.torLogPath;
+            if (path == null || path.isEmpty()) return "";
+            File logF = new File(path);
+            if (!logF.exists()) return "";
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new FileInputStream(logF), StandardCharsets.UTF_8));
+            ArrayList<String> hits = new ArrayList<>();
+            String line;
+            while ((line = r.readLine()) != null) {
+                String low = line.toLowerCase(Locale.US);
+                if (low.indexOf("hidden service") >= 0 || low.indexOf("descriptor") >= 0
+                        || low.indexOf("intro") >= 0 || low.indexOf("rend") >= 0
+                        || low.indexOf("onion") >= 0) {
                     hits.add(line.trim());
                     if (hits.size() > 4) hits.remove(0);
                 }

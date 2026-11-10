@@ -518,6 +518,7 @@ public class TorService extends Service {
         sb.append("SocksPolicy accept 127.0.0.1:*").append("\n");
         sb.append("DataDirectory ").append(dataDir.getAbsolutePath()).append("\n");
         sb.append("HiddenServiceDir ").append(hsDir.getAbsolutePath()).append("\n");
+        sb.append("HiddenServiceVersion 3\n");
         sb.append("HiddenServicePort ").append(HS_PORT).append(" 127.0.0.1:").append(HS_PORT).append("\n");
         sb.append("AvoidDiskWrites 1\n");
         sb.append("Log notice file ").append(logF.getAbsolutePath()).append("\n");
