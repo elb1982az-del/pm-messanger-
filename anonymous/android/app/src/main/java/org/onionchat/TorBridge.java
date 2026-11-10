@@ -142,7 +142,15 @@ public class TorBridge extends Plugin {
     private static boolean socksPost(String onion, String payload) throws Exception {
         Socket s = new Socket();
         try {
-            s.connect(new InetSocketAddress("127.0.0.1", SOCKS_PORT), 8000);
+            try {
+                s.connect(new InetSocketAddress("127.0.0.1", SOCKS_PORT), 8000);
+            } catch (Exception ce) {
+                /* surface the errno AND tor's own verdict on the 9050 bind so a
+                 * failed loopback tells us exactly which side refused */
+                throw new Exception("SOCKS connect to 127.0.0.1:" + SOCKS_PORT + " failed: " + ce
+                        + (ce.getCause() != null ? " → " + ce.getCause() : "")
+                        + (torBindVerdict().isEmpty() ? "" : " | tor.log: " + torBindVerdict()));
+            }
             s.setSoTimeout(180000);          // tor circuts can take tens of seconds
             OutputStream os = s.getOutputStream();
             InputStream is = s.getInputStream();
@@ -187,6 +195,35 @@ public class TorBridge extends Plugin {
         } finally {
             try { s.close(); } catch (Throwable ignored) {}
         }
+    }
+
+    /* Pull tor's own verdict on the SOCKS bind from its file log: does the log
+     * show 9050 opened, or a bind failure (occupied address, etc.)? */
+    private static String torBindVerdict() {
+        try {
+            String path = TorService.torLogPath;
+            if (path == null || path.isEmpty()) return "";
+            File logF = new File(path);
+            if (!logF.exists()) return "";
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new FileInputStream(logF), StandardCharsets.UTF_8));
+            ArrayList<String> hits = new ArrayList<>();
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.indexOf("SocksPort") >= 0 || line.indexOf("Failed to bind") >= 0
+                        || line.indexOf("Address already in use") >= 0 || line.indexOf("Opening Socks") >= 0
+                        || line.indexOf("Failed to open") >= 0) {
+                    hits.add(line.trim());
+                    if (hits.size() > 4) hits.remove(0);
+                }
+            }
+            r.close();
+            if (hits.isEmpty()) return "";
+            StringBuilder sb = new StringBuilder();
+            for (String h : hits) sb.append(h).append(" ;; ");
+            String out = sb.toString();
+            if (out.length() > 320) out = out.substring(out.length() - 320);
+            return out;
+        } catch (Throwable ignored) { return ""; }
     }
 
     private static byte[] readFully(InputStream is, int n) throws Exception {

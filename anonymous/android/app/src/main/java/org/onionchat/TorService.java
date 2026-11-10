@@ -64,6 +64,7 @@ public class TorService extends Service {
          * exec-probe → spawned → bootstrapping …). "start-requested" is set by
          * TorBridge.startTor BEFORE the service intent is even fired. */
         public static volatile String stage = "idle";
+        public static volatile String torLogPath = "";   // absolute path of the live tor file log (set by spawnTor)
         public static volatile int attempt = 0;
         public static volatile int epoch = 0;
         public static volatile long attemptStartAt = 0L;
@@ -213,6 +214,7 @@ public class TorService extends Service {
         final File hsDir = new File(torDir, "hidden_service");
         final File dataDir = new File(torDir, "data");
         final File logF = new File(torDir, "tor.log");
+        State.torLogPath = logF.getAbsolutePath();
         hsDir.mkdirs();
         dataDir.mkdirs();
         binDir.mkdirs();
@@ -506,6 +508,13 @@ public class TorService extends Service {
         sb.append("# Anonymous - attempt ").append(attempt).append("/").append(MAX_ATTEMPTS).append('\n');
         sb.append("RunAsDaemon 0\n");
         sb.append("SocksPort 127.0.0.1:").append(SOCKS_PORT).append("\n");
+        /* explicit loopback-only SOCKS policy (user-directed, 0.3.11):
+         * accept the two loopback families, reject everything else. Even though
+         * SocksPort bound to 127.0.0.1 holds this invariant, stating it removes
+         * any doubt and survives future SocksPort-form changes. */
+        sb.append("SocksPolicy accept 127.0.0.1/8\n");
+        sb.append("SocksPolicy accept ::1/128\n");
+        sb.append("SocksPolicy reject *\n");
         sb.append("SocksPolicy accept 127.0.0.1:*").append("\n");
         sb.append("DataDirectory ").append(dataDir.getAbsolutePath()).append("\n");
         sb.append("HiddenServiceDir ").append(hsDir.getAbsolutePath()).append("\n");
