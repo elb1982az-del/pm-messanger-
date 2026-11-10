@@ -65,6 +65,10 @@ public class TorService extends Service {
          * TorBridge.startTor BEFORE the service intent is even fired. */
         public static volatile String stage = "idle";
         public static volatile String torLogPath = "";   // absolute path of the live tor file log (set by spawnTor)
+        /* hidden-service publication state, parsed from the same tor.log:
+         * only when this is true is our .onion actually reachable — a loopback
+         * or peer connect BEFORE it fires yields socks rep 1. */
+        public static volatile boolean hsPublished = false;
         public static volatile int attempt = 0;
         public static volatile int epoch = 0;
         public static volatile long attemptStartAt = 0L;
@@ -415,6 +419,18 @@ public class TorService extends Service {
                         }
                         if (tail.indexOf("Clock skew", 0) >= 0 || tail.indexOf("clock is set", 0) >= 0) {
                             State.clockSkew = true;
+                        }
+                        /* hidden-service publication verdict (0.3.13): tor logs
+                         * "Publication has succeeded" / "Uploaded descriptor"
+                         * when the onion is actually reachable through the
+                         * network — gate client connects on it. */
+                        if (!State.hsPublished) {
+                            String tl = tail.toLowerCase(java.util.Locale.US);
+                            if (tl.indexOf("publication has succeeded") >= 0
+                                    || tl.indexOf("uploaded descriptor") >= 0
+                                    || tl.indexOf("hidden service: descriptor") >= 0) {
+                                State.hsPublished = true;
+                            }
                         }
                         int errAt = tail.indexOf("[err]");
                         if (errAt >= 0 && !State.ready) {

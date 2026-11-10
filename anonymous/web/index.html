@@ -152,6 +152,7 @@ let messages = {};            // contactKey -> [{who:'me'|'them'|'sys', text, t}
 let seenInbound = {};         // dedupe of delivered tokens
 let currentKey = null;        // open chat
 let online = null;            // last tor status
+let lastLoopback = '';        // last loopback self-test report (rendered in tor modal)
 
 /* ---------- helpers ---------- */
 function toast(msg, bad) {
@@ -558,19 +559,41 @@ async function openTorModal() {
         attemptTxt + '</div>' +
         (s.error ? '<div class="err mono">' + par(s.error) + '</div>' : '') +
         (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><div class="bundlebox" style="font-size:.68rem;max-height:30vh;">' + par(s.log) + '</div>' : '') +
+        '<div class="sub" style="margin-top:10px;color:#6a8577;">loopback report:</div>' +
+        '<div id="lb-report" class="bundlebox" style="font-size:.68rem;max-height:22vh;">' + par(lastLoopback || '(not run yet this session)') + '</div>' +
         '<button class="ghost" id="tc-close">Close</button>' +
         '<button class="ghost" id="tc-restart">Restart tor</button>' +
         '<button class="ghost" id="tc-loopback">Loopback self-test</button>');
     el('tc-close').onclick = unveil;
     el('tc-restart').onclick = async () => { try { await transport.start(); toast('tor restart requested'); } catch (e) { toast('restart failed: ' + e.message, true); } unveil(); };
     el('tc-loopback').onclick = async () => {
-        const own = (await transport.status()).onion;
-        if (!own) { toast('no onion yet — wait for tor ✓ first', true); return; }
+        const box = el('lb-report');
+        box.textContent = 'loopback: reading transport state…';
+        /* gate on PUBLICATION, not just bootstrap: connecting to the onion
+         * before tor reports the descriptor published is the classic rep-1
+         * generator, so wait up to 75 s in 3 s beats. */
+        let s = await transport.status();
+        for (let waited = 0; waited < 75000 && (!s.hs || !s.ready); waited += 3000) {
+            box.textContent = 'loopback: waiting for hidden service to publish (' + waited / 1000 + 's)… bootstrap ' + (s.bootstrapped || 0) + '%, published: ' + (s.hs ? 'yes' : 'no');
+            await new Promise(r => setTimeout(r, 3000));
+            s = await transport.status();
+        }
+        if (!s.ready) { box.textContent = '✗ not bootstrapped after 75s — send the whole modal text to the operator'; return; }
+        if (!s.hs) { box.textContent = '✗ tor never reported "Publication has succeeded" — hidden service is NOT reachable yet (HS log below); do not attempt sends'; return; }
+        const own = s.onion;
+        if (!own) { box.textContent = '✗ no onion address in status'; return; }
         const marker = 'LB' + Date.now();
-        toast('loopback: sending to own onion…');
+        box.textContent = 'loopback: sending to own onion ' + own.slice(0, 14) + '…';
+        const t0 = Date.now();
         const r = await transport.send(own, 'loopback:' + marker).catch(e => ({ sent: false, error: String(e && e.message || e) }));
-        if (r.sent) toast('✓ loopback full path OK (socks → tor → own hidden service → local inbox)');
-        else toast('✗ loopback failed: ' + (r.error || 'unknown'), true);
+        const ms = Date.now() - t0;
+        lastLoopback = (r.sent
+            ? '✓ LOOPBACK PASS (' + ms + ' ms) — full path socks→tor→own HS→local listener OK'
+            : '✗ LOOPBACK FAIL (' + ms + ' ms) — ' + (r.error || 'no error text')) +
+            ' | rung ' + (s.attempt || '?') + ' | onion ' + own;
+        box.textContent = lastLoopback;
+        if (r.sent) toast('✓ loopback full path OK');
+        else toast('✗ loopback failed — read the report box above', true);
     };
 };;
 el('btn-selfcheck').onclick = selfCheck;

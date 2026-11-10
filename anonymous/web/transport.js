@@ -113,6 +113,7 @@ Transport.prototype.status = function() {
             stage: (r && r.stage) || '',
             attempt: (r && r.attempt) || 0,
             clockSkew: !!(r && r.clockSkew),
+            hs: !!(r && r.hs),
             log: (r && r.log) || ''
         };
         return this.statusCache;
