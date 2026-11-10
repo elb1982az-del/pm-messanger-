@@ -203,7 +203,7 @@ public class TorBridge extends Plugin {
      * show 9050 opened, or a bind failure (occupied address, etc.)? */
     private static String torBindVerdict() {
         try {
-            String path = TorService.torLogPath;
+            String path = TorService.State.torLogPath;
             if (path == null || path.isEmpty()) return "";
             File logF = new File(path);
             if (!logF.exists()) return "";
