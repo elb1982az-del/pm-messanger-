@@ -256,7 +256,7 @@ async function tick() {
             else {
                 it.tries = (it.tries || 0) + 1;
                 left.push(it);
-                if (it.tries % 4 === 0) pushText(it.key, '⚠ delivery attempt ' + it.tries + ' failed: ' + (r.error ? r.error : 'no report from native send (peer hidden service unreachable?)'), true);
+                if (it.tries % 4 === 0) pushText(it.key, '⚠ delivery attempt ' + it.tries + ' failed: ' + (r.error ? cleanErr(r.error) : 'no report from native send (peer hidden service unreachable?)'), true);
             }
         }
         if (left.length !== state.outbox.length) { state.outbox = left; vault.save(); }
@@ -403,7 +403,7 @@ async function sendMessage() {
     const r = await transport.send(c.onion, token).catch(e => ({ sent: false, error: String(e && e.message || e) }));
     if (r.sent) { /* delivered */ }
     else {
-        const why = r.error ? ('delivery failed: ' + r.error + ' — queued, retrying automatically')
+        const why = r.error ? ('delivery failed: ' + cleanErr(r.error) + ' — queued, retrying automatically')
                             : 'delivery failed this cycle — queued, retrying automatically';
         queueOut(c, token, key, why);
     }
@@ -471,6 +471,15 @@ async function meModal() {
     bindTap(el('me-copy'), () => copyText(b, 'bundle copied'));
     el('me-close').onclick = unveil;
     el('me-wipe').onclick = () => { vault.lock(); location.reload(); };
+}
+
+/* Strip java.lang.* boilerplate from native error text: the decisive part is
+ * always after the last "Exception: ", and package names eat small screens. */
+function cleanErr(e) {
+    let s = String(e || '');
+    const cut = s.lastIndexOf('Exception: ');
+    if (cut >= 0) s = s.slice(cut + 'Exception: '.length);
+    return s.replace(/^java\.lang\.[A-Za-z]+:\s*/, '').trim();
 }
 
 function esc(s) {
