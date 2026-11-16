@@ -93,6 +93,7 @@ public class TorBridge extends Plugin {
         r.put("stage", TorService.State.stage == null ? "" : TorService.State.stage);
         r.put("attempt", TorService.State.attempt);
         r.put("clockSkew", TorService.State.clockSkew);
+        r.put("info", TorService.State.infoTail);
         r.put("hs", TorService.State.hsPublished);
         String log;
         synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
@@ -360,6 +361,7 @@ public class TorBridge extends Plugin {
                             sb.append(",\"stage\":").append(json(TorService.State.stage));
                             sb.append(",\"attempt\":").append(TorService.State.attempt);
                             sb.append(",\"clockSkew\":").append(TorService.State.clockSkew);
+                            sb.append(",\"info\":").append(json(TorService.State.infoTail == null ? "" : TorService.State.infoTail));
             sb.append(",\"hs\":").append(TorService.State.hsPublished);
                             String log;
                             synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }

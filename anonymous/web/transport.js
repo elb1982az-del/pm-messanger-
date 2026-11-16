@@ -114,6 +114,7 @@ Transport.prototype.status = function() {
             attempt: (r && r.attempt) || 0,
             clockSkew: !!(r && r.clockSkew),
             hs: !!(r && r.hs),
+            info: String((r && r.info) || ''),
             log: (r && r.log) || ''
         };
         return this.statusCache;

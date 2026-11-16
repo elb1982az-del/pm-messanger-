@@ -66,6 +66,10 @@ public class TorService extends Service {
         public static volatile String stage = "idle";
         public static volatile String torLogPath = "";   // absolute path of the live tor file log (set by spawnTor)
         public static volatile String infoLogPath = "";  // info-severity side channel (publication progress)
+        /* last publication-related lines from the info side channel (0.3.16):
+         * surfaced in the chip modal so tor's verbatim INFO-severity complaints
+         * (upload failures, intro-point circuit errors) are visible on device. */
+        public static volatile String infoTail = "";
         /* hidden-service publication state, parsed from the same tor.log:
          * only when this is true is our .onion actually reachable — a loopback
          * or peer connect BEFORE it fires yields socks rep 1. */
@@ -607,6 +611,29 @@ public class TorService extends Service {
                     State.hsPublished = true;
                 }
             }
+            /* publication-related lines for the modal (0.3.16): keep the last
+             * few hits so tor's verbatim INFO complaints are on-device visible */
+            try {
+                String raw = new String(buf, java.nio.charset.StandardCharsets.UTF_8);
+                String[] lines = raw.split("\n");
+                ArrayList<String> hits = new ArrayList<>();
+                for (String ln : lines) {
+                    String low = ln.toLowerCase(java.util.Locale.US);
+                    if (low.indexOf("publish") >= 0 || low.indexOf("descriptor") >= 0
+                            || low.indexOf("intro") >= 0 || low.indexOf("rend") >= 0
+                            || low.indexOf("hidden service") >= 0 || low.indexOf("upload") >= 0) {
+                        hits.add(ln.trim());
+                        if (hits.size() > 6) hits.remove(0);
+                    }
+                }
+                if (!hits.isEmpty()) {
+                    StringBuilder sb2 = new StringBuilder();
+                    for (String h : hits) sb2.append(h).append('\n');
+                    String out = sb2.toString();
+                    if (out.length() > 1400) out = out.substring(out.length() - 1400);
+                    State.infoTail = out;
+                }
+            } catch (Throwable ignored) { }
             /* keep the side channel bounded: truncating works even while tor
              * holds the fd (its next write lands at the new end-of-file). */
             if (len > 2097152L) {
