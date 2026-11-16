@@ -430,17 +430,29 @@ public class TorService extends Service {
                         /* hidden-service publication verdict (0.3.13/0.3.15):
                          * scanned from BOTH the notice log and the info-level
                          * side channel — v3 publication progress lives at
-                         * info severity in 0.4.9.x. Broadened tokens. */
+                         * info severity in 0.4.9.x. Broadened tokens
+                         * (0.3.17): device info log showed the real wording
+                         * is 'Uploaded hidden service descriptor (status 200)'
+                         * — 'uploaded descriptor' never matched it. */
                         if (!State.hsPublished) {
                             String tl = tail.toLowerCase(java.util.Locale.US);
                             if (tl.indexOf("publication has succeeded") >= 0
                                     || tl.indexOf("uploaded descriptor") >= 0
+                                    || tl.indexOf("uploaded hidden service") >= 0
+                                    || tl.indexOf("descriptor stored successfully") >= 0
                                     || tl.indexOf("hidden service: descriptor") >= 0) {
                                 State.hsPublished = true;
                             }
                         }
                         if (cycle % 5 == 0) {
                             scanInfoLog();
+                            /* self-healing local listener (0.3.17): the 9878
+                             * control plane / HS target must ALWAYS accept;
+                             * re-spawn it whenever the probe says DOWN. */
+                            if (!TorBridge.localListenerLive()) {
+                                State.lastError = "local 9878 listener DOWN — respawning (self-heal)";
+                                TorBridge.startHttpListener(null);
+                            }
                         }
                         int errAt = tail.indexOf("[err]");
                         if (errAt >= 0 && !State.ready) {
@@ -546,7 +558,11 @@ public class TorService extends Service {
         sb.append("HiddenServiceDir ").append(hsDir.getAbsolutePath()).append("\n");
         sb.append("HiddenServiceVersion 3\n");
         sb.append("HiddenServicePort ").append(HS_PORT).append(" 127.0.0.1:").append(HS_PORT).append("\n");
-        sb.append("AvoidDiskWrites 1\n");
+        /* AvoidDiskWrites REMOVED (0.3.17): with it set, tor avoided persisting
+         * the hidden-service private key — a fresh onion every daemon restart
+         * (device evidence: three different onions across three runs), which
+         * invalidates every contact card ever exchanged. Persistence is the
+         * point of the HS dir. */
         sb.append("Log notice file ").append(logF.getAbsolutePath()).append("\n");
         /* info-level side channel (0.3.15): v3 hidden-service publication
          * progress is logged at INFO severity in tor 0.4.9.x — with only the
@@ -606,6 +622,8 @@ public class TorService extends Service {
             if (!State.hsPublished) {
                 if (tail.indexOf("publication has succeeded") >= 0
                         || tail.indexOf("uploaded descriptor") >= 0
+                        || tail.indexOf("uploaded hidden service") >= 0
+                        || tail.indexOf("descriptor stored successfully") >= 0
                         || tail.indexOf("hidden service: descriptor") >= 0
                         || (tail.indexOf("upload") >= 0 && tail.indexOf("succeeded") >= 0)) {
                     State.hsPublished = true;

@@ -301,13 +301,35 @@ public class TorBridge extends Plugin {
     /* ---------------- local inbox HTTP listener ---------------- */
 
     /* Control plane owner. (package-private: TorService also starts it) */
+    /** Liveness probe on the local 9878 listener (0.3.17): the started-flag
+     * alone can lie when the thread dies without hitting the fatal catch,
+     * which left the hidden service with nowhere to forward inbound
+     * connections (ECONNREFUSED → socks rep 1 on every loopback). */
+    static boolean localListenerLive() {
+        try {
+            java.net.Socket p = new java.net.Socket();
+            p.connect(new InetSocketAddress("127.0.0.1", HTTP_PORT), 400);
+            p.close();
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     static void startHttpListener(Context ctx) {
-        if (listenerStarted) return;
+        /* liveness-aware guard (0.3.17): only skip when the port actually
+         * accepts; a dead-but-flagged listener gets re-spawned. */
+        if (listenerStarted && localListenerLive()) return;
         listenerStarted = true;
         final Context appCtx = (ctx instanceof android.content.Context) ? ctx.getApplicationContext() : null;
         final Thread t = new Thread(() -> {
             try {
-                ServerSocket srv = new ServerSocket(HTTP_PORT, 128, InetAddress.getLoopbackAddress());
+                /* SO_REUSEADDR via explicit bind: restart races (stale
+                 * TIME_WAIT connections from a prior listener) must not
+                 * permanently kill the control plane. */
+                ServerSocket srv = new ServerSocket();
+                srv.setReuseAddress(true);
+                srv.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), HTTP_PORT), 128);
                 while (!srv.isClosed()) {
                     final Socket s = srv.accept();
                     try {
