@@ -42,7 +42,7 @@ public class TorBridge extends Plugin {
     private static final int HTTP_PORT = 9878;
     private static final int MAX_PAYLOAD = 4 * 1024 * 1024;   // hard cap per POST
     private static final int MAX_INBOX = 256;
-    private static volatile boolean listenerStarted = false;
+    private static volatile boolean listenerStarted = false; /* legacy flag, superseded by listenerThread (0.3.18) */
 
     /**
      * Explicit daemon trigger, callable from ANY layer (Application, Activity)
@@ -94,6 +94,7 @@ public class TorBridge extends Plugin {
         r.put("attempt", TorService.State.attempt);
         r.put("clockSkew", TorService.State.clockSkew);
         r.put("info", TorService.State.infoTail);
+        r.put("listener", TorService.State.listenerStatus);
         r.put("hs", TorService.State.hsPublished);
         String log;
         synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
@@ -312,25 +313,61 @@ public class TorBridge extends Plugin {
             p.close();
             return true;
         } catch (Throwable t) {
+            try { p.close(); } catch (Throwable ignored) {}
             return false;
         }
     }
 
     static void startHttpListener(Context ctx) {
-        /* liveness-aware guard (0.3.17): only skip when the port actually
-         * accepts; a dead-but-flagged listener gets re-spawned. */
-        if (listenerStarted && localListenerLive()) return;
-        listenerStarted = true;
-        final Context appCtx = (ctx instanceof android.content.Context) ? ctx.getApplicationContext() : null;
-        final Thread t = new Thread(() -> {
-            try {
-                /* SO_REUSEADDR via explicit bind: restart races (stale
-                 * TIME_WAIT connections from a prior listener) must not
-                 * permanently kill the control plane. */
-                ServerSocket srv = new ServerSocket();
-                srv.setReuseAddress(true);
-                srv.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), HTTP_PORT), 128);
-                while (!srv.isClosed()) {
+        /* single-owner + liveness-aware guard (0.3.18): if a listener thread
+         * is alive we NEVER spawn a second one — a live thread either accepts
+         * (probe up) or is inside its bind-retry loop (probe down but will
+         * bind the moment the port frees). */
+        synchronized (listenerLock) {
+            if (listenerThread != null && listenerThread.isAlive()) return;
+            final Context appCtx = (ctx instanceof android.content.Context) ? ctx.getApplicationContext() : null;
+            final Thread t = new Thread(() -> {
+                ServerSocket srv = null;
+                try {
+                    /* bind-retry loop (0.3.18): device evidence showed
+                     * EADDRINUSE while the port refused connects — some
+                     * holder keeps a binding without listening. Retry every
+                     * 2 s forever; the moment it frees, we own 9878. The
+                     * holder's identity (uid + state from /proc) is recorded
+                     * for the modal on every failed attempt. */
+                    while (true) {
+                        try {
+                            srv = new ServerSocket();
+                            srv.setReuseAddress(true);
+                            srv.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), HTTP_PORT), 128);
+                            TorService.State.listenerStatus = "up:9878";
+                            break;
+                        } catch (Throwable bex) {
+                            try { if (srv != null) srv.close(); } catch (Throwable ignored) {}
+                            srv = null;
+                            TorService.State.listenerStatus = "bind-wait: " + bex.getClass().getSimpleName()
+                                    + " | holder: " + portHolderVerdict();
+                            Thread.sleep(2000);
+                        }
+                    }
+                    acceptLoop(srv, appCtx);
+                } catch (Throwable fatal) {
+                    TorService.State.listenerStatus = "dead: " + fatal;
+                    TorService.State.lastError = "inbox listener: " + fatal;
+                }
+            }, "anon-http-9878");
+            t.setDaemon(true);
+            listenerThread = t;
+            t.start();
+        }
+    }
+
+    private static final Object listenerLock = new Object();
+    private static Thread listenerThread = null;
+
+    /* the accept + dispatch loop, extracted so bind retries can precede it */
+    private static void acceptLoop(ServerSocket srv, Context appCtx) throws Exception {
+        while (!srv.isClosed()) {
                     final Socket s = srv.accept();
                     try {
                         s.setSoTimeout(10000);
@@ -384,6 +421,7 @@ public class TorBridge extends Plugin {
                             sb.append(",\"attempt\":").append(TorService.State.attempt);
                             sb.append(",\"clockSkew\":").append(TorService.State.clockSkew);
                             sb.append(",\"info\":").append(json(TorService.State.infoTail == null ? "" : TorService.State.infoTail));
+            sb.append(",\"listener\":").append(json(TorService.State.listenerStatus));
             sb.append(",\"hs\":").append(TorService.State.hsPublished);
                             String log;
                             synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
@@ -453,13 +491,43 @@ public class TorBridge extends Plugin {
                         close(s);
                     }
                 }
-            } catch (Throwable fatal) {
-                listenerStarted = false;
-                TorService.State.lastError = "inbox listener: " + fatal;
+    }
+
+    /* Who is holding 9878? (0.3.18) Parse /proc/net/{tcp,tcp6} for the local
+     * port and report socket state + owning uid — this names the mystery
+     * EADDRINUSE holder on-device (our own zombie, another app, or a kernel
+     * state that a plain bind error can't distinguish). */
+    private static String portHolderVerdict() {
+        StringBuilder out = new StringBuilder();
+        try {
+            final String hexPort = String.format("%04X", HTTP_PORT);
+            for (String table : new String[]{"/proc/net/tcp", "/proc/net/tcp6"}) {
+                try {
+                    java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new FileInputStream(table), StandardCharsets.UTF_8));
+                    String ln = r.readLine(); /* header */
+                    while ((ln = r.readLine()) != null) {
+                        String[] f = ln.trim().split("\\s+");
+                        if (f.length < 8) continue;
+                        int colon = f[1].lastIndexOf(':');
+                        if (colon < 0) continue;
+                        String lp = f[1].substring(colon + 1);
+                        if (!lp.equalsIgnoreCase(hexPort)) continue;
+                        String st = f[3];
+                        String stName = "0A".equals(st) ? "LISTEN" : "01".equals(st) ? "ESTABLISHED"
+                                : "06".equals(st) ? "TIME_WAIT" : "08".equals(st) ? "CLOSE_WAIT"
+                                : "03".equals(st) ? "SYN_SENT" : st;
+                        String uid = f[7];
+                        boolean ours = String.valueOf(android.os.Process.myUid()).equals(uid);
+                        if (out.length() > 0) out.append(" ;; ");
+                        out.append(table.endsWith("6") ? "tcp6 " : "tcp ")
+                                .append("st=").append(stName).append(" uid=").append(uid)
+                                .append(ours ? " (us)" : " (other app?)");
+                    }
+                    r.close();
+                } catch (Throwable ignored) { }
             }
-        }, "anon-http-9878");
-        t.setDaemon(true);
-        t.start();
+        } catch (Throwable ignored) { }
+        return out.length() == 0 ? "no /proc entry (kernel-level oddity)" : out.toString();
     }
 
     /* Minimal JSON string encoder for the local control plane. */

@@ -70,6 +70,9 @@ public class TorService extends Service {
          * surfaced in the chip modal so tor's verbatim INFO-severity complaints
          * (upload failures, intro-point circuit errors) are visible on device. */
         public static volatile String infoTail = "";
+        /* local 9878 control-plane listener lifecycle (0.3.18): "up:9878",
+         * "bind-wait: … holder …", or "dead: …" — surfaced in the chip modal. */
+        public static volatile String listenerStatus = "";
         /* hidden-service publication state, parsed from the same tor.log:
          * only when this is true is our .onion actually reachable — a loopback
          * or peer connect BEFORE it fires yields socks rep 1. */
@@ -446,11 +449,11 @@ public class TorService extends Service {
                         }
                         if (cycle % 5 == 0) {
                             scanInfoLog();
-                            /* self-healing local listener (0.3.17): the 9878
-                             * control plane / HS target must ALWAYS accept;
-                             * re-spawn it whenever the probe says DOWN. */
+                            /* self-healing local listener (0.3.17/0.3.18): the
+                             * 9878 control plane / HS target must ALWAYS accept;
+                             * startHttpListener is a safe no-op while a thread
+                             * is alive (bind-retry loop handles EADDRINUSE). */
                             if (!TorBridge.localListenerLive()) {
-                                State.lastError = "local 9878 listener DOWN — respawning (self-heal)";
                                 TorBridge.startHttpListener(null);
                             }
                         }

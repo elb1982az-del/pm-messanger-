@@ -566,6 +566,7 @@ async function openTorModal() {
         '<br>stage: ' + par(s.stage || '(never requested)') +
         '<br>rung: ' + (s.attempt || '?') + '/3' +
         '<br>published: ' + (s.hs ? 'yes' : 'no') +
+        '<br>listener: ' + par(s.listener || '(unknown)') +
         (s.mode ? '<br>bridge: ' + par(s.mode) : '') +
         attemptTxt + '</div>' +
         (s.error ? '<div class="err mono">' + par(s.error) + '</div>' : '') +
