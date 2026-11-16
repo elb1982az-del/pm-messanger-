@@ -213,7 +213,13 @@ public class TorBridge extends Plugin {
 
             BufferedReader br = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
             String line = br.readLine();
-            return line != null && line.contains(" 200 ");
+            /* never silent (0.3.22): a null or non-200 reply used to return
+             * plain false → loopback reported "no error text". The actual
+             * reply line IS the diagnosis. */
+            if (line == null) throw new Exception("local delivery: connection closed without response"
+                    + " | kernel9878: " + portHolderVerdict());
+            if (!line.contains(" 200 ")) throw new Exception("local delivery: unexpected reply '" + line + "'");
+            return true;
         } finally {
             try { s.close(); } catch (Throwable ignored) {}
         }
@@ -432,6 +438,20 @@ public class TorBridge extends Plugin {
                                 while (TorService.State.inbox.size() > MAX_INBOX) TorService.State.inbox.pollLast();
                             }
                             handledPeer = true;
+                            /* ack the sender (0.3.22): /p previously answered
+                             * NOTHING — the generic writer is skipped for
+                             * handledPeer, so socksPost read EOF → silent
+                             * false → loopback "no error text" even though
+                             * the payload WAS delivered. Peers need the 200. */
+                            byte[] rb2 = "ok".getBytes(StandardCharsets.UTF_8);
+                            byte[] resp2 = ("HTTP/1.1 200 OK\r\n" + CORSP
+                                    + "Content-Type: text/plain\r\n"
+                                    + "Content-Length: " + rb2.length + "\r\n"
+                                    + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII);
+                            OutputStream os2 = s.getOutputStream();
+                            os2.write(resp2);
+                            if (rb2.length > 0) os2.write(rb2);
+                            os2.flush();
                         } else if (reqLine.startsWith("GET /status")) {
                             StringBuilder sb = new StringBuilder("{");
                             sb.append("\"running\":").append(TorService.State.running);
@@ -514,6 +534,9 @@ public class TorBridge extends Plugin {
                         }
                         close(s);
                     } catch (Throwable oneConn) {
+                        /* record instead of silent-swallow (0.3.22): a dying
+                         * inbound connection must be visible in the modal */
+                        TorService.State.lastError = "listener conn: " + oneConn;
                         close(s);
                     }
                 }
