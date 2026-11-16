@@ -307,8 +307,8 @@ public class TorBridge extends Plugin {
      * which left the hidden service with nowhere to forward inbound
      * connections (ECONNREFUSED → socks rep 1 on every loopback). */
     static boolean localListenerLive() {
+        java.net.Socket p = new java.net.Socket();
         try {
-            java.net.Socket p = new java.net.Socket();
             p.connect(new InetSocketAddress("127.0.0.1", HTTP_PORT), 400);
             p.close();
             return true;
