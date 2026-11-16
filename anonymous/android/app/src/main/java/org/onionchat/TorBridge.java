@@ -94,7 +94,9 @@ public class TorBridge extends Plugin {
         r.put("attempt", TorService.State.attempt);
         r.put("clockSkew", TorService.State.clockSkew);
         r.put("info", TorService.State.infoTail);
-        r.put("listener", (localListenerLive() ? "probe:up" : "probe:DOWN") + " · " + TorService.State.listenerStatus);
+        r.put("listener", (localListenerLive() ? "probe:up" : "probe:DOWN")
+                + " · kernel: " + portHolderVerdict()
+                + " · status: " + TorService.State.listenerStatus);
         r.put("hs", TorService.State.hsPublished);
         String log;
         synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
@@ -191,6 +193,7 @@ public class TorBridge extends Plugin {
                         : rep == 8 ? " address type not supported" : "";
                 throw new Exception("socks connect failed (rep " + rep + rn + ")"
                         + " | local 9878: " + localListenerLiveness()
+                        + " | kernel9878: " + portHolderVerdict()
                         + " | rung: " + TorService.State.attempt
                         + (hsLogVerdict().isEmpty() ? "" : " | HS log: " + hsLogVerdict()));
             }
@@ -435,7 +438,9 @@ public class TorBridge extends Plugin {
                             sb.append(",\"attempt\":").append(TorService.State.attempt);
                             sb.append(",\"clockSkew\":").append(TorService.State.clockSkew);
                             sb.append(",\"info\":").append(json(TorService.State.infoTail == null ? "" : TorService.State.infoTail));
-            sb.append(",\"listener\":").append(json((localListenerLive() ? "probe:up" : "probe:DOWN") + " · " + TorService.State.listenerStatus));
+            sb.append(",\"listener\":").append(json((localListenerLive() ? "probe:up" : "probe:DOWN")
+                    + " · kernel: " + portHolderVerdict()
+                    + " · status: " + TorService.State.listenerStatus));
             sb.append(",\"hs\":").append(TorService.State.hsPublished);
                             String log;
                             synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
@@ -535,10 +540,16 @@ public class TorBridge extends Plugin {
                                 : "03".equals(st) ? "SYN_SENT" : st;
                         String uid = f[7];
                         boolean ours = String.valueOf(android.os.Process.myUid()).equals(uid);
+                        /* queue + inode (0.3.20): a LISTEN entry with a huge
+                         * rx queue or a foreign inode tells us whether the
+                         * kernel actually has a listener on 9878 and whose. */
+                        String queue = f.length > 4 ? f[4] : "?";
+                        String inode = f.length > 9 ? f[9] : "?";
                         if (out.length() > 0) out.append(" ;; ");
                         out.append(table.endsWith("6") ? "tcp6 " : "tcp ")
                                 .append("st=").append(stName).append(" uid=").append(uid)
-                                .append(ours ? " (us)" : " (other app?)");
+                                .append(ours ? " (us)" : " (other app?)")
+                                .append(" q=").append(queue).append(" ino=").append(inode);
                     }
                     r.close();
                 } catch (Throwable ignored) { }
