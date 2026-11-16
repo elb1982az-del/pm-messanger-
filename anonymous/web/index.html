@@ -588,17 +588,29 @@ async function openTorModal() {
             s = await transport.status();
         }
         if (!s.ready) { box.textContent = '✗ not bootstrapped after 75s — send the whole modal text to the operator'; return; }
-        if (!s.hs) { box.textContent = '✗ tor never reported "Publication has succeeded" — hidden service is NOT reachable yet (HS log below); do not attempt sends'; return; }
         const own = s.onion;
         if (!own) { box.textContent = '✗ no onion address in status'; return; }
+        /* ground truth over the flag (0.3.15): even if tor never reported
+         * publication at info level, the SOCKS rep itself is the definitive
+         * answer — attempt anyway (up to 4 tries, 6 s apart) and let the rep
+         * code decide PASS/FAIL. */
         const marker = 'LB' + Date.now();
-        box.textContent = 'loopback: sending to own onion ' + own.slice(0, 14) + '…';
-        const t0 = Date.now();
-        const r = await transport.send(own, 'loopback:' + marker).catch(e => ({ sent: false, error: String(e && e.message || e) }));
-        const ms = Date.now() - t0;
+        let r = null, ms = 0;
+        const tries = s.hs ? 1 : 4;
+        for (let i = 0; i < tries; i++) {
+            if (i > 0) {
+                box.textContent = 'loopback: retry ' + (i + 1) + '/' + tries + ' in 6s… (published: no — attempting anyway)';
+                await new Promise(r2 => setTimeout(r2, 6000));
+            }
+            box.textContent = 'loopback: sending to own onion ' + own.slice(0, 14) + (s.hs ? '…' : '… (published: no — ground-truth attempt)');
+            const t0 = Date.now();
+            r = await transport.send(own, 'loopback:' + marker).catch(e => ({ sent: false, error: String(e && e.message || e) }));
+            ms = Date.now() - t0;
+            if (r.sent) break;
+        }
         lastLoopback = (r.sent
-            ? '✓ LOOPBACK PASS (' + ms + ' ms) — full path socks→tor→own HS→local listener OK'
-            : '✗ LOOPBACK FAIL (' + ms + ' ms) — ' + (r.error || 'no error text')) +
+            ? '✓ LOOPBACK PASS (' + ms + ' ms' + (s.hs ? '' : ', published flag never fired') + ') — full path socks→tor→own HS→local listener OK'
+            : '✗ LOOPBACK FAIL (' + ms + ' ms) — ' + (r.error || 'no error text') + (s.hs ? '' : ' | tor never reported publication at info level either — HS genuinely not published')) +
             ' | rung ' + (s.attempt || '?') + ' | onion ' + own;
         box.textContent = lastLoopback;
         if (r.sent) toast('✓ loopback full path OK');

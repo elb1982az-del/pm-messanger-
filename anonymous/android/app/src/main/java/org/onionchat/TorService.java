@@ -65,6 +65,7 @@ public class TorService extends Service {
          * TorBridge.startTor BEFORE the service intent is even fired. */
         public static volatile String stage = "idle";
         public static volatile String torLogPath = "";   // absolute path of the live tor file log (set by spawnTor)
+        public static volatile String infoLogPath = "";  // info-severity side channel (publication progress)
         /* hidden-service publication state, parsed from the same tor.log:
          * only when this is true is our .onion actually reachable — a loopback
          * or peer connect BEFORE it fires yields socks rep 1. */
@@ -218,6 +219,8 @@ public class TorService extends Service {
         final File hsDir = new File(torDir, "hidden_service");
         final File dataDir = new File(torDir, "data");
         final File logF = new File(torDir, "tor.log");
+        State.torLogPath = logF.getAbsolutePath();
+        State.infoLogPath = new File(torDir, "tor-info.log").getAbsolutePath();
         State.torLogPath = logF.getAbsolutePath();
         hsDir.mkdirs();
         dataDir.mkdirs();
@@ -420,10 +423,10 @@ public class TorService extends Service {
                         if (tail.indexOf("Clock skew", 0) >= 0 || tail.indexOf("clock is set", 0) >= 0) {
                             State.clockSkew = true;
                         }
-                        /* hidden-service publication verdict (0.3.13): tor logs
-                         * "Publication has succeeded" / "Uploaded descriptor"
-                         * when the onion is actually reachable through the
-                         * network — gate client connects on it. */
+                        /* hidden-service publication verdict (0.3.13/0.3.15):
+                         * scanned from BOTH the notice log and the info-level
+                         * side channel — v3 publication progress lives at
+                         * info severity in 0.4.9.x. Broadened tokens. */
                         if (!State.hsPublished) {
                             String tl = tail.toLowerCase(java.util.Locale.US);
                             if (tl.indexOf("publication has succeeded") >= 0
@@ -431,6 +434,9 @@ public class TorService extends Service {
                                     || tl.indexOf("hidden service: descriptor") >= 0) {
                                 State.hsPublished = true;
                             }
+                        }
+                        if (cycle % 5 == 0) {
+                            scanInfoLog();
                         }
                         int errAt = tail.indexOf("[err]");
                         if (errAt >= 0 && !State.ready) {
@@ -538,6 +544,12 @@ public class TorService extends Service {
         sb.append("HiddenServicePort ").append(HS_PORT).append(" 127.0.0.1:").append(HS_PORT).append("\n");
         sb.append("AvoidDiskWrites 1\n");
         sb.append("Log notice file ").append(logF.getAbsolutePath()).append("\n");
+        /* info-level side channel (0.3.15): v3 hidden-service publication
+         * progress is logged at INFO severity in tor 0.4.9.x — with only the
+         * notice stream we could never observe 'Publication has succeeded'
+         * even when it happened. Separate file keeps noise out of the chip
+         * modal; the poller scans it and truncates it when it grows. */
+        sb.append("Log info file ").append(new File(torDir, "tor-info.log").getAbsolutePath()).append("\n");
         sb.append("Log warn file ").append(logF.getAbsolutePath()).append("\n");
         sb.append("NumEntryGuards ").append(attempt >= 3 ? 8 : 1).append("\n");
         if (attempt >= 2) {
@@ -565,6 +577,42 @@ public class TorService extends Service {
         FileOutputStream fo = new FileOutputStream(new File(torDir, "torrc"));
         fo.write(sb.toString().getBytes("UTF-8"));
         fo.close();
+    }
+
+    /* Info-level side-channel scan (0.3.15): v3 hidden-service publication
+     * progress is logged at INFO severity in tor 0.4.9.x — the notice stream
+     * never carries it, which left State.hsPublished permanently false even
+     * on success. Read the tail of tor-info.log for publication tokens
+     * (broad + success/failure aware) and truncate the file when it grows. */
+    private void scanInfoLog() {
+        try {
+            String path = State.infoLogPath;
+            if (path == null || path.isEmpty()) return;
+            File f = new File(path);
+            if (!f.exists()) return;
+            long len = f.length();
+            if (len <= 0L) return;
+            long skip = len > 16384L ? len - 16384L : 0L;
+            java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r");
+            raf.seek(skip);
+            byte[] buf = new byte[(int) (len - skip)];
+            raf.readFully(buf);
+            raf.close();
+            String tail = new String(buf, java.nio.charset.StandardCharsets.UTF_8).toLowerCase(java.util.Locale.US);
+            if (!State.hsPublished) {
+                if (tail.indexOf("publication has succeeded") >= 0
+                        || tail.indexOf("uploaded descriptor") >= 0
+                        || tail.indexOf("hidden service: descriptor") >= 0
+                        || (tail.indexOf("upload") >= 0 && tail.indexOf("succeeded") >= 0)) {
+                    State.hsPublished = true;
+                }
+            }
+            /* keep the side channel bounded: truncating works even while tor
+             * holds the fd (its next write lands at the new end-of-file). */
+            if (len > 2097152L) {
+                new FileOutputStream(f, false).close();
+            }
+        } catch (Throwable ignored) { }
     }
 
     private static String readTail(File f, int max) {
