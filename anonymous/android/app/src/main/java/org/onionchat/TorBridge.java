@@ -94,7 +94,7 @@ public class TorBridge extends Plugin {
         r.put("attempt", TorService.State.attempt);
         r.put("clockSkew", TorService.State.clockSkew);
         r.put("info", TorService.State.infoTail);
-        r.put("listener", TorService.State.listenerStatus);
+        r.put("listener", (localListenerLive() ? "probe:up" : "probe:DOWN") + " · " + TorService.State.listenerStatus);
         r.put("hs", TorService.State.hsPublished);
         String log;
         synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
@@ -337,7 +337,22 @@ public class TorBridge extends Plugin {
                      * for the modal on every failed attempt. */
                     while (true) {
                         try {
-                            srv = new ServerSocket();
+                            /* close()-tracing subclass (0.3.19): records WHO
+                             * closes the listening socket — the silent death
+                             * observed on device left no "dead:" status, so
+                             * the closer's stack is the decisive evidence. */
+                            srv = new ServerSocket() {
+                                @Override public void close() throws java.io.IOException {
+                                    try {
+                                        java.io.StringWriter sw = new java.io.StringWriter();
+                                        new Throwable("srv.close() here").printStackTrace(new java.io.PrintWriter(sw));
+                                        String tr = sw.toString();
+                                        if (tr.length() > 700) tr = tr.substring(0, 700);
+                                        TorService.State.listenerStatus = "srv.close() by: " + tr.replace('\n', '|');
+                                    } catch (Throwable ignored) {}
+                                    super.close();
+                                }
+                            };
                             srv.setReuseAddress(true);
                             srv.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), HTTP_PORT), 128);
                             TorService.State.listenerStatus = "up:9878";
@@ -367,8 +382,7 @@ public class TorBridge extends Plugin {
 
     /* the accept + dispatch loop, extracted so bind retries can precede it */
     private static void acceptLoop(ServerSocket srv, Context appCtx) throws Exception {
-        while (!srv.isClosed()) {
-                    final Socket s = srv.accept();
+        while (!srv.isClosed()) {                    final Socket s = srv.accept();
                     try {
                         s.setSoTimeout(10000);
                         BufferedReader br = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8));
@@ -421,7 +435,7 @@ public class TorBridge extends Plugin {
                             sb.append(",\"attempt\":").append(TorService.State.attempt);
                             sb.append(",\"clockSkew\":").append(TorService.State.clockSkew);
                             sb.append(",\"info\":").append(json(TorService.State.infoTail == null ? "" : TorService.State.infoTail));
-            sb.append(",\"listener\":").append(json(TorService.State.listenerStatus));
+            sb.append(",\"listener\":").append(json((localListenerLive() ? "probe:up" : "probe:DOWN") + " · " + TorService.State.listenerStatus));
             sb.append(",\"hs\":").append(TorService.State.hsPublished);
                             String log;
                             synchronized (TorService.State.logTail) { log = TorService.State.logTail.toString(); }
@@ -491,6 +505,9 @@ public class TorBridge extends Plugin {
                         close(s);
                     }
                 }
+        /* loop exit without exception = srv was closed (0.3.19 evidence) */
+        TorService.State.listenerStatus = "acceptLoop exited, srv closed=" + srv.isClosed()
+                + " | prior: " + TorService.State.listenerStatus;
     }
 
     /* Who is holding 9878? (0.3.18) Parse /proc/net/{tcp,tcp6} for the local
