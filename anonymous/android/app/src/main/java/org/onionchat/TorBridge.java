@@ -357,7 +357,14 @@ public class TorBridge extends Plugin {
                                 }
                             };
                             srv.setReuseAddress(true);
-                            srv.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), HTTP_PORT), 128);
+                            /* IPv4 LITERAL (0.3.21 — THE LOOPBACK BUG):
+                             * getLoopbackAddress() resolves to ::1 on this
+                             * device (Android 17): the kernel showed a tcp6
+                             * LISTEN for our socket while every consumer —
+                             * tor's HiddenServicePort target, probes, torrc —
+                             * uses 127.0.0.1 (v4) → ECONNREFUSED forever.
+                             * Bind the same literal everyone targets. */
+                            srv.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), HTTP_PORT), 128);
                             TorService.State.listenerStatus = "up:9878";
                             break;
                         } catch (Throwable bex) {
