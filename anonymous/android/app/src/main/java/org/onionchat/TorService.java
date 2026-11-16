@@ -616,7 +616,7 @@ public class TorService extends Service {
             try {
                 String raw = new String(buf, java.nio.charset.StandardCharsets.UTF_8);
                 String[] lines = raw.split("\n");
-                ArrayList<String> hits = new ArrayList<>();
+                java.util.ArrayList<String> hits = new java.util.ArrayList<>();
                 for (String ln : lines) {
                     String low = ln.toLowerCase(java.util.Locale.US);
                     if (low.indexOf("publish") >= 0 || low.indexOf("descriptor") >= 0
