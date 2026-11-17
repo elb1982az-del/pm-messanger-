@@ -486,7 +486,7 @@ public final class VoiceEngine {
             MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
             for (MediaCodecInfo ci : list.getCodecInfos()) {
                 if (!ci.isEncoder()) continue;
-                for (String t : ci.getTypes()) if (mime.equals(t)) return true;
+                for (String t : ci.getSupportedTypes()) if (mime.equals(t)) return true;
             }
         } catch (Throwable ignored) { }
         return false;

@@ -43,6 +43,10 @@ public class TorService extends Service {
 
     public static final int HS_PORT = 9878;
     public static final int SOCKS_PORT = 9050;
+    /* app context for engine helpers (0.4.0: speaker toggle etc.) */
+    private static volatile android.content.Context appCtx = null;
+    public static android.content.Context appContext() { return appCtx; }
+    public static void setAppContext(android.content.Context c) { appCtx = c; }
     private static final int MAX_ATTEMPTS = 3;
     private static final long STALL_MS = 90000;          // no bootstrap movement → next rung
 
@@ -73,10 +77,6 @@ public class TorService extends Service {
         /* local 9878 control-plane listener lifecycle (0.3.18): "up:9878",
          * "bind-wait: … holder …", or "dead: …" — surfaced in the chip modal. */
         public static volatile String listenerStatus = "";
-        /* app context for engine helpers (speaker toggle etc.) */
-        private static volatile android.content.Context appCtx = null;
-        public static android.content.Context appContext() { return appCtx; }
-        public static void setAppContext(android.content.Context c) { appCtx = c; }
         /* hidden-service publication state, parsed from the same tor.log:
          * only when this is true is our .onion actually reachable — a loopback
          * or peer connect BEFORE it fires yields socks rep 1. */
