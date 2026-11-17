@@ -73,6 +73,10 @@ public class TorService extends Service {
         /* local 9878 control-plane listener lifecycle (0.3.18): "up:9878",
          * "bind-wait: … holder …", or "dead: …" — surfaced in the chip modal. */
         public static volatile String listenerStatus = "";
+        /* app context for engine helpers (speaker toggle etc.) */
+        private static volatile android.content.Context appCtx = null;
+        public static android.content.Context appContext() { return appCtx; }
+        public static void setAppContext(android.content.Context c) { appCtx = c; }
         /* hidden-service publication state, parsed from the same tor.log:
          * only when this is true is our .onion actually reachable — a loopback
          * or peer connect BEFORE it fires yields socks rep 1. */
@@ -188,7 +192,9 @@ public class TorService extends Service {
             /* control plane for the UI (0.3.7): /status /start /send /poll on
              * 127.0.0.1:9878 — the webview can reach this port with plain
              * fetch(), no Capacitor bridge needed. */
+            TorService.setAppContext(getApplicationContext());
             TorBridge.startHttpListener(getApplicationContext());
+            VoiceEngine.ensureVoiceServer();
             if (torProc == null || !isAlive(torProc)) {
                 ladderExhausted = false;
                 spawnTor();
@@ -456,6 +462,11 @@ public class TorService extends Service {
                             if (!TorBridge.localListenerLive()) {
                                 TorBridge.startHttpListener(null);
                             }
+                            /* voice server self-heal (0.4.0): same invariant
+                             * as 9878 — the HS audio target must always accept */
+                            if (!VoiceEngine.voiceServerLive()) {
+                                VoiceEngine.ensureVoiceServer();
+                            }
                         }
                         int errAt = tail.indexOf("[err]");
                         if (errAt >= 0 && !State.ready) {
@@ -561,6 +572,9 @@ public class TorService extends Service {
         sb.append("HiddenServiceDir ").append(hsDir.getAbsolutePath()).append("\n");
         sb.append("HiddenServiceVersion 3\n");
         sb.append("HiddenServicePort ").append(HS_PORT).append(" 127.0.0.1:").append(HS_PORT).append("\n");
+        /* voice channel (0.4.0): dedicated raw-TCP hidden-service port for the
+         * audio stream — length-prefixed encrypted frames from VoiceEngine. */
+        sb.append("HiddenServicePort ").append(VoiceEngine.VOICE_PORT).append(" 127.0.0.1:").append(VoiceEngine.VOICE_PORT).append("\n");
         /* AvoidDiskWrites REMOVED (0.3.17): with it set, tor avoided persisting
          * the hidden-service private key — a fresh onion every daemon restart
          * (device evidence: three different onions across three runs), which

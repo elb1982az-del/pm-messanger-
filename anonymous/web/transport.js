@@ -142,6 +142,15 @@ Transport.prototype.poll = function() {
     return this.call('pollInbox', {}).then(function(r) { return (r && r.inbox) || []; });
 };
 
+/* Generic bridge passthrough (0.4.0): voice-call methods ride the same
+ * proxy/native resolution; http mode has no audio channel. */
+Transport.prototype.callMethod = function(method, args) {
+    if (!this.available() || this.mode === 'http') {
+        return Promise.resolve({ unsupported: true });
+    }
+    return this.call(method, args || {}).then(function(r) { return r || {}; });
+};
+
 global.Transport = Transport;
 
 })(typeof window !== 'undefined' ? window : globalThis);

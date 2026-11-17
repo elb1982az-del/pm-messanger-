@@ -25,5 +25,12 @@ public class MainActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 7001);
         }
+        /* voice calls (0.4.0): RECORD_AUDIO runtime permission — requested at
+         * startup (not at call time) so the ring→answer path never stalls on
+         * a system dialog; VoiceEngine treats an ungranted mic as an error. */
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 7002);
+        }
     }
 }

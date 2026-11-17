@@ -125,6 +125,7 @@
                 <div id="chat-name" style="font-weight:700;"></div>
                 <div id="chat-sub" class="sub" style="font-size:.68rem;"></div>
             </div>
+            <button class="ghost" id="btn-call" style="padding:6px 10px;">📞</button>
         </div>
         <div class="bubbles" id="bubbles"></div>
         <div class="compose">
@@ -137,6 +138,22 @@
 <!-- ======= modals ======= -->
 <div id="modal-veil" class="hidden">
     <div class="card" id="modal-body"></div>
+</div>
+
+<!-- in-call overlay (0.4.0): fixed, non-dismissable — unlike the modal veil -->
+<div id="call-ui" class="hidden" style="position:fixed;inset:0;z-index:70;background:rgba(6,14,10,.96);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;user-select:none;">
+    <div style="font-size:.8rem;color:#6a8577;">Anonymous voice · e2e over tor</div>
+    <div id="call-title" style="font-size:1.25rem;font-weight:800;color:#7dffce;"></div>
+    <div id="call-sub" style="font-size:.75rem;color:#8fa89a;"></div>
+    <div id="call-timer" style="font-size:2rem;font-weight:800;color:#e8fff4;font-variant-numeric:tabular-nums;">00:00</div>
+    <div class="row" style="width:min(92vw,420px);margin-top:8px;">
+        <button class="ghost" id="btn-call-mute">🎤 mute</button>
+        <button class="ghost" id="btn-call-spk">🔊 speaker</button>
+    </div>
+    <div class="row" style="width:min(92vw,420px);">
+        <button class="danger" id="btn-call-end" style="flex:1;">■ hang up</button>
+    </div>
+    <div id="call-detail" class="sub" style="font-size:.65rem;color:#5f7a6b;max-width:80vw;text-align:center;"></div>
 </div>
 
 <script>
@@ -268,6 +285,18 @@ async function tick() {
             }
         } catch (e) {}
     }
+    /* call-state reconciliation (0.4.0): native verdicts decide phase — a
+     * closed channel or failed client ends the UI even without signaling. */
+    if (call && call.phase !== 'ended') {
+        try {
+            const cs = await transport.callMethod('callStatus', {});
+            if (el('call-detail') && !el('call-ui').classList.contains('hidden')) {
+                el('call-detail').textContent = cs.detail || '';
+            }
+            if (cs.phase === 'ended' && call.phase === 'active') endCallUi('channel closed');
+            if (call.phase === 'ringing-out' && cs.phase === 'ended') endCallUi('call failed: ' + (cs.detail || 'no channel'));
+        } catch (e) {}
+    }
 }
 
 async function processInbound(token) {
@@ -281,6 +310,11 @@ async function processInbound(token) {
                 const clone = CryptoCore.loadState(CryptoCore.dumpState(st0));
                 const plain = await CryptoCore.ratchetDecrypt(clone, token);
                 adopt(key, clone, st0);
+                /* call signaling rides the same ratchet envelope (0.4.0) */
+                if (plain && plain.indexOf('{"t":"call"') === 0) {
+                    try { await handleCallSignal(key, JSON.parse(plain)); } catch (e) {}
+                    return;
+                }
                 deliver(key, plain);
                 return;
             } catch (e) {}
@@ -304,6 +338,146 @@ function deliver(key, plain) {
     renderList();
     if (currentKey === key) renderChat(key);
 }
+
+/* ================= voice calls (0.4.0) ================= */
+/* Signaling rides the EXISTING ratchet path: JSON inside the encrypted
+ * plaintext — {"t":"call","st":"invite|accept|reject|busy|hangup","cid","k"}.
+ * Audio rides the dedicated HS voice port 9879 (native VoiceEngine). */
+let call = null; /* {cid,key,role,phase,ckey,name,onion,startTs} */
+let callTimerInt = null;
+
+async function sigSend(ckey, obj) {
+    const st = sessions[ckey];
+    const c = state.contacts[ckey];
+    if (!st || !c || !c.onion) throw new Error('no session/onion for signaling');
+    const token = await CryptoCore.ratchetEncrypt(st, JSON.stringify(obj));
+    persistSession(ckey, st);
+    return transport.send(c.onion, token);
+}
+
+async function handleCallSignal(ckey, m) {
+    const c = state.contacts[ckey];
+    const name = (c && c.name) || 'peer';
+    const inCall = call && ['ringing-out', 'ringing-in', 'active'].includes(call.phase);
+    if (m.st === 'invite') {
+        if (inCall) { try { await sigSend(ckey, { t: 'call', st: 'busy', cid: m.cid }); } catch (e) {} return; }
+        if (!online.ready) { try { await sigSend(ckey, { t: 'call', st: 'busy', cid: m.cid }); } catch (e) {} return; }
+        call = { cid: m.cid, key: m.k, role: 'callee', phase: 'ringing-in', ckey, name, onion: c.onion, startTs: 0 };
+        pushText(ckey, '📞 incoming call from ' + name);
+        try { navigator.vibrate && navigator.vibrate([300, 150, 300, 150, 600]); } catch (e) {}
+        ringModal(name, ckey);
+        return;
+    }
+    if (!call || call.cid !== m.cid) return; /* stale signal for an old call */
+    if (m.st === 'accept' && call.role === 'caller' && call.phase === 'ringing-out') {
+        call.phase = 'active'; call.startTs = Date.now();
+        showCallUi();
+        pushText(call.ckey, '📞 call connected');
+        toast('📞 call connected');
+    } else if (m.st === 'reject') {
+        endCallUi('peer declined');
+    } else if (m.st === 'busy') {
+        endCallUi('peer busy');
+    } else if (m.st === 'hangup') {
+        endCallUi('peer hung up');
+    }
+}
+
+function ringModal(name, ckey) {
+    veil('<h2 style="color:#7dffce;font-size:.95rem;">📞 Incoming call</h2>' +
+        '<div class="sub" style="margin:8px 0;">' + esc(name) + ' · end-to-end over tor</div>' +
+        '<div class="row"><button class="ghost" id="rc-reject">Reject</button>' +
+        '<button id="rc-accept" style="flex:2;">Accept</button></div>');
+    el('rc-accept').onclick = async () => {
+        if (!call) return;
+        call.phase = 'active'; call.startTs = Date.now();
+        try {
+            await transport.callMethod('callAnswer', { cid: call.cid, key: call.key });
+            await sigSend(call.ckey, { t: 'call', st: 'accept', cid: call.cid });
+            unveil();
+            showCallUi();
+        } catch (e) { endCallUi('accept failed: ' + (e.message || e)); }
+    };
+    el('rc-reject').onclick = async () => {
+        const c = call; call = null;
+        try { await sigSend(ckey, { t: 'call', st: 'reject', cid: c.cid }); } catch (e) {}
+        try { await transport.callMethod('callEnd', { reason: 'rejected' }); } catch (e) {}
+        unveil();
+    };
+}
+
+function showCallUi() {
+    if (!call) return;
+    el('call-title').textContent = call.name || 'call';
+    el('call-sub').textContent = call.role === 'callee' ? 'connected · incoming' : (call.phase === 'ringing-out' ? 'calling… (circuit building)' : 'connected · outgoing');
+    el('call-detail').textContent = '';
+    el('call-ui').classList.remove('hidden');
+    if (callTimerInt) clearInterval(callTimerInt);
+    callTimerInt = setInterval(() => {
+        if (!call || !call.startTs) return;
+        const s = Math.floor((Date.now() - call.startTs) / 1000);
+        el('call-timer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+    }, 500);
+    /* let the callee phase sit at ringing until media actually connects */
+    if (call.phase === 'ringing-out') {
+        const pollRing = setInterval(async () => {
+            if (!call || call.phase !== 'ringing-out') { clearInterval(pollRing); return; }
+            try {
+                const cs = await transport.callMethod('callStatus', {});
+                if (cs.phase === 'active') { call.phase = 'active'; call.startTs = Date.now(); el('call-sub').textContent = 'connected · outgoing'; clearInterval(pollRing); }
+                if (cs.phase === 'ended') { clearInterval(pollRing); endCallUi('call failed: ' + (cs.detail || 'no channel')); }
+            } catch (e) { clearInterval(pollRing); }
+        }, 800);
+    }
+}
+
+function endCallUi(why) {
+    if (callTimerInt) { clearInterval(callTimerInt); callTimerInt = null; }
+    el('call-ui').classList.add('hidden');
+    if (call) pushText(call.ckey, '📞 call ended' + (why ? ' — ' + why : ''));
+    call = null;
+    if (why) toast('📞 ' + why);
+}
+
+el('btn-call').onclick = async () => {
+    const key = currentKey, c = state.contacts[key];
+    if (!c || !c.onion) { toast('no onion on this contact', true); return; }
+    if (call && ['ringing-out', 'ringing-in', 'active'].includes(call.phase)) { toast('already in a call', true); return; }
+    const mic = await transport.callMethod('micStatus', {});
+    if (mic.unsupported) { toast('voice needs the native bridge — open in the app, not http mode', true); return; }
+    if (!mic.granted) { toast('microphone permission missing — reinstall the app and allow mic', true); return; }
+    if (!online.ready) { toast('tor not ready — wait for the chip to go ✓', true); return; }
+    if (!sessions[key]) { toast('no session yet — send a message to this peer first', true); return; }
+    const cid = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(x => x.toString(16).padStart(2, '0')).join('');
+    const keyB = CryptoCore.b64.u8ToB64(new Uint8Array(crypto.getRandomValues(new Uint8Array(16))));
+    call = { cid, key: keyB, role: 'caller', phase: 'ringing-out', ckey: key, name: c.name || 'peer', onion: c.onion, startTs: 0 };
+    try {
+        const token = await CryptoCore.ratchetEncrypt(sessions[key], JSON.stringify({ t: 'call', st: 'invite', cid, k: keyB }));
+        persistSession(key, sessions[key]);
+        const r = await transport.send(c.onion, token);
+        if (!r.sent) { endCallUi('invite failed: ' + (r.error || 'peer unreachable')); return; }
+        await transport.callMethod('callStart', { onion: c.onion, cid, key: keyB });
+        showCallUi();
+    } catch (e) { endCallUi('call failed: ' + (e.message || e)); }
+};
+el('btn-call-end').onclick = async () => {
+    const c = call;
+    try { await transport.callMethod('callEnd', { reason: 'hangup' }); } catch (e) {}
+    if (c) { try { await sigSend(c.ckey, { t: 'call', st: 'hangup', cid: c.cid }); } catch (e) {} }
+    endCallUi();
+};
+el('btn-call-mute').onclick = async () => {
+    if (!call) return;
+    call.muted = !call.muted;
+    try { await transport.callMethod('callMute', { muted: !!call.muted }); } catch (e) {}
+    el('btn-call-mute').textContent = call.muted ? '🎤 muted' : '🎤 mute';
+};
+el('btn-call-spk').onclick = async () => {
+    if (!call) return;
+    call.speaker = !call.speaker;
+    try { await transport.callMethod('callSpeaker', { on: !!call.speaker }); } catch (e) {}
+    el('btn-call-spk').textContent = call.speaker ? '🔊 speaker on' : '🔊 speaker';
+};
 
 function sweep() {
     const win = ((state.settings && state.settings.retentionMin) || 30) * 60000;
@@ -576,7 +750,8 @@ async function openTorModal() {
         '<div id="lb-report" class="bundlebox" style="font-size:.68rem;max-height:22vh;">' + par(lastLoopback || '(not run yet this session)') + '</div>' +
         '<button class="ghost" id="tc-close">Close</button>' +
         '<button class="ghost" id="tc-restart">Restart tor</button>' +
-        '<button class="ghost" id="tc-loopback">Loopback self-test</button>');
+        '<button class="ghost" id="tc-loopback">Loopback self-test</button>' +
+        '<button class="ghost" id="vc-loopback">Voice loopback (mic→tor→echo)</button>');
     el('tc-close').onclick = unveil;
     el('tc-restart').onclick = async () => { try { await transport.start(); toast('tor restart requested'); } catch (e) { toast('restart failed: ' + e.message, true); } unveil(); };
     el('tc-loopback').onclick = async () => {
@@ -619,6 +794,31 @@ async function openTorModal() {
         box.textContent = lastLoopback;
         if (r.sent) toast('✓ loopback full path OK');
         else toast('✗ loopback failed — read the report box above', true);
+    };
+    /* voice loopback (0.4.0): mic → encode → encrypt → tor → own HS:9879 →
+     * decrypt → jitter → speaker. You hear your own voice through the FULL
+     * circuit; 25 s run, or stop it early. */
+    el('vc-loopback').onclick = async () => {
+        const box = el('lb-report');
+        const mic = await transport.callMethod('micStatus', {});
+        if (mic.unsupported) { box.textContent = 'voice loopback: unsupported in http mode — open in the app'; return; }
+        if (!mic.granted) { box.textContent = 'voice loopback: microphone permission missing'; return; }
+        if (!online || !online.ready) { box.textContent = 'voice loopback: tor not ready'; return; }
+        try {
+            await transport.callMethod('voiceLoopback', {});
+            box.textContent = 'voice loopback: RUNNING — speak now; echo arrives through tor (~2-6s). Auto-stops in 25s.';
+            toast('🎙 voice loopback running — speak!');
+            const t0 = Date.now();
+            while (Date.now() - t0 < 25000) {
+                await new Promise(r2 => setTimeout(r2, 1500));
+                const cs = await transport.callMethod('callStatus', {});
+                box.textContent = 'voice loopback: ' + (cs.loopback ? 'RUNNING' : 'STOPPED') + ' · ' + (cs.detail || cs.phase) + ' (' + Math.round((Date.now() - t0) / 1000) + 's)';
+                if (!cs.loopback) break;
+            }
+            await transport.callMethod('voiceLoopbackStop', {});
+            lastLoopback = 'voice loopback ran ' + Math.round((Date.now() - t0) / 1000) + 's — did you hear your own echo? (mic→tor→own HS:9879→jitter→speaker)';
+            box.textContent = lastLoopback;
+        } catch (e) { box.textContent = 'voice loopback failed: ' + (e.message || e); }
     };
 };;
 el('btn-selfcheck').onclick = selfCheck;
