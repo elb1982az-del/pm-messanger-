@@ -282,7 +282,7 @@ public final class VoiceEngine {
     /* ======================= media pipeline ======================= */
 
     private static void startMedia(Socket sock, boolean capture, boolean playback) {
-        final boolean wb;
+        boolean wb = false;
         try { wb = hasCodec("audio/amr-wb"); } catch (Throwable t) { wb = false; }
         final int rate = wb ? SAMPLE_RATE_WB : SAMPLE_RATE_NB;
         final String mime = wb ? "audio/amr-wb" : "audio/3gpp";
