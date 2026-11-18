@@ -121,11 +121,11 @@
     <section id="chat-view" class="chatwrap hidden">
         <div class="chathead">
             <button class="back" id="btn-back">‹</button>
-            <div style="flex:1;">
-                <div id="chat-name" style="font-weight:700;"></div>
-                <div id="chat-sub" class="sub" style="font-size:.68rem;"></div>
+            <div style="flex:1;min-width:0;overflow:hidden;">
+                <div id="chat-name" style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+                <div id="chat-sub" class="sub" style="font-size:.68rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
             </div>
-            <button class="ghost" id="btn-call" style="padding:6px 10px;">📞</button>
+            <button class="ghost" id="btn-call" style="padding:6px 10px;flex-shrink:0;">📞</button>
         </div>
         <div class="bubbles" id="bubbles"></div>
         <div class="compose">
@@ -293,8 +293,12 @@ async function tick() {
             if (el('call-detail') && !el('call-ui').classList.contains('hidden')) {
                 el('call-detail').textContent = cs.detail || '';
             }
-            if (cs.phase === 'ended' && call.phase === 'active') endCallUi('channel closed');
-            if (call.phase === 'ringing-out' && cs.phase === 'ended') endCallUi('call failed: ' + (cs.detail || 'no channel'));
+            if (cs.phase === 'ended' && call.phase === 'active') {
+                endCallUi('channel closed' + (cs.detail ? ' — ' + cs.detail : ''));
+            }
+            if (call.phase === 'ringing-out' && cs.phase === 'ended') {
+                endCallUi('call failed: ' + (cs.detail || 'no channel'));
+            }
         } catch (e) {}
     }
 }
@@ -374,6 +378,19 @@ async function handleCallSignal(ckey, m) {
         showCallUi();
         pushText(call.ckey, '📞 call connected');
         toast('📞 call connected');
+        /* v0.4.1: the early channel (opened right after the invite) may have
+         * died while the callee was deciding — if native isn't active yet,
+         * reconnect now that the callee is armed. startOutgoing is idempotent
+         * for the same cid, so a still-live channel is never killed. */
+        (async () => {
+            try {
+                const cs = await transport.callMethod('callStatus', {});
+                if (call && call.phase === 'active' && cs.phase !== 'active') {
+                    pushText(call.ckey, '📞 re-establishing voice channel…');
+                    await transport.callMethod('callStart', { onion: call.onion, cid: call.cid, key: call.key });
+                }
+            } catch (e) {}
+        })();
     } else if (m.st === 'reject') {
         endCallUi('peer declined');
     } else if (m.st === 'busy') {
@@ -579,6 +596,10 @@ async function sendMessage() {
     else {
         const why = r.error ? ('delivery failed: ' + cleanErr(r.error) + ' — queued, retrying automatically')
                             : 'delivery failed this cycle — queued, retrying automatically';
+        /* v0.4.1: surface the exact native verdict immediately, not just in
+         * the sys bubble — rep 4/5 (peer HS down/refused) vs rep 1 (circuit)
+         * vs bad onion are diagnosable on the spot. */
+        toast('✗ send failed: ' + String(why).slice(0, 90), true);
         queueOut(c, token, key, why);
     }
 }
@@ -619,10 +640,16 @@ function addContactModal() {
             const parsed = await CryptoCore.verifyBundle(bt); // throws on tamper
             const k = contactKey(bt);
             if (!k) throw new Error('bundle missing identity key');
-            if (onion && !/\.onion$/.test(onion)) throw new Error('onion address must end in .onion');
+            /* v0.4.1: strict v3 onion validation — a truncated/stale address
+             * used to import cleanly and then fail silently for days. V3
+             * onions are exactly 56 base32 chars + ".onion", lowercased. */
+            const on = onion.toLowerCase().replace(/\s+/g, '');
+            if (on && !/^[a-z2-7]{56}\.onion$/.test(on)) {
+                throw new Error('invalid onion address — a v3 onion is exactly 56 characters (a-z, 2-7) plus ".onion"; you pasted ' + on.length + ' chars' + (on.length === 62 ? ' (did you copy it with wrapping?)' : ''));
+            }
             state.contacts = state.contacts || {};
             const existed = state.contacts[k];
-            state.contacts[k] = { name: name || (existed && existed.name) || '', bundleText: bt, onion: onion || (existed && existed.onion) || '', verified: true, addedAt: Date.now() };
+            state.contacts[k] = { name: name || (existed && existed.name) || '', bundleText: bt, onion: on || (existed && existed.onion) || '', verified: true, addedAt: Date.now() };
             await vault.save();
             unveil();
             renderList();
@@ -748,6 +775,11 @@ async function openTorModal() {
         (s.log ? '<div class="sub" style="margin-top:10px;color:#6a8577;">tor log (tail):</div><div class="bundlebox" style="font-size:.68rem;max-height:30vh;">' + par(s.log) + '</div>' : '') +
         '<div class="sub" style="margin-top:10px;color:#6a8577;">loopback report:</div>' +
         '<div id="lb-report" class="bundlebox" style="font-size:.68rem;max-height:22vh;">' + par(lastLoopback || '(not run yet this session)') + '</div>' +
+        '<div class="sub" style="margin-top:10px;color:#6a8577;">last peer-send failure (cross-device clue — loopback only proves YOUR side):</div>' +
+        '<div id="se-report" class="bundlebox" style="font-size:.68rem;max-height:16vh;">' +
+        (Transport.lastSendErr
+            ? par((Transport.lastSendErr.onion ? 'to ' + Transport.lastSendErr.onion + ' · ' : '') + cleanErr(Transport.lastSendErr.error) + ' · ' + new Date(Transport.lastSendErr.t).toLocaleTimeString())
+            : '(no failed send this session)') + '</div>' +
         '<button class="ghost" id="tc-close">Close</button>' +
         '<button class="ghost" id="tc-restart">Restart tor</button>' +
         '<button class="ghost" id="tc-loopback">Loopback self-test</button>' +

@@ -59,7 +59,7 @@ public final class VoiceEngine {
 
     private static final int SAMPLE_RATE_WB = 16000;
     private static final int SAMPLE_RATE_NB = 8000;
-    private static final long ARM_WAIT_MS = 30000;
+    private static final long ARM_WAIT_MS = 60000;   // incoming conn waits for the callee to arm (slow Accept must not kill the call)
     private static final int JITTER_START = 8;
     private static final int JITTER_MAX = 24;
 
@@ -95,8 +95,16 @@ public final class VoiceEngine {
     /* ======================= bridge-facing API ======================= */
 
     /** Caller: open the voice channel to the peer and start streaming both ways. */
+    /** Idempotent: re-invoking with the SAME cid while a healthy channel for
+     * it is already up (the accept-signal reconnect path) is a no-op — this
+     * lets JS re-callStart on accept without killing a live channel. */
     public static void startOutgoing(String onion, String cidHex, String keyB64) {
         synchronized (lock) {
+            if (CState.phase.equals("active") && CState.cid.equals(cidHex == null ? "" : cidHex)
+                    && callSock != null && !callSock.isClosed()) {
+                CState.detail = "client: channel already up (reconnect no-op)";
+                return;
+            }
             stopEverything();
             CState.cid = cidHex == null ? "" : cidHex;
             callKey = b64(keyB64);
@@ -242,7 +250,9 @@ public final class VoiceEngine {
                     startMedia(s, true, true);
                 }
             }
-            s.setSoTimeout(15000);
+            /* v0.4.1: no read timeout on the media channel (caller sends
+             * continuously, but silence must never kill the call) */
+            s.setSoTimeout(0);
         } catch (Throwable t) {
             CState.detail = "voice accept: " + t;
             try { s.close(); } catch (Throwable ignored) {}
@@ -253,8 +263,35 @@ public final class VoiceEngine {
 
     private static void clientThread(String onion, String cid, boolean lb) {
         new Thread(() -> {
+            Socket s = null;
+            /* v0.4.1: the first rendezvous to a peer HS routinely takes 3-8s
+             * and can spike past 20s; give the SOCKS CONNECT 45s, and retry
+             * ONCE after 8s if the first attempt fails while we are still in
+             * the "calling" phase with an unchanged cid (the invite may still
+             * be in flight / a transient circuit failure). */
+            for (int attempt = 0; attempt < 2 && s == null; attempt++) {
+                try {
+                    s = socksConnect(onion, VOICE_PORT, 45000);
+                } catch (Throwable ce) {
+                    synchronized (lock) {
+                        boolean stillCalling = "calling".equals(CState.phase) && CState.cid.equals(cid);
+                        if (attempt == 0 && stillCalling) {
+                            CState.detail = "client: connect attempt 1 failed (" + ce + ") — retrying in 8s";
+                        } else {
+                            CState.detail = (lb ? "loopback failed: " : "client failed: ") + ce;
+                            if (!"active".equals(CState.phase)) CState.phase = "ended";
+                        }
+                    }
+                    if (attempt == 0 && s == null) {
+                        boolean stillCalling;
+                        synchronized (lock) { stillCalling = "calling".equals(CState.phase) && CState.cid.equals(cid); }
+                        if (!stillCalling) return;
+                        try { Thread.sleep(8000); } catch (InterruptedException ie) { return; }
+                    }
+                }
+            }
+            if (s == null) return;
             try {
-                Socket s = socksConnect(onion, VOICE_PORT, 20000);
                 OutputStream os = s.getOutputStream();
                 os.write(hexToBytes(cid));
                 os.flush();
@@ -262,12 +299,21 @@ public final class VoiceEngine {
                     if (!CState.cid.equals(cid)) { try { s.close(); } catch (Throwable ignored) {} return; }
                     callSock = s;
                 }
-                s.setSoTimeout(15000);
+                /* v0.4.1: NO read timeout on the media channel — the callee
+                 * sends nothing until they arm (human taps Accept, invite
+                 * poll can take seconds). A 15s timeout used to kill the
+                 * caller's channel with "channel closed" during ringing.
+                 * Silence is legal; endCall()/hangup closes the socket to
+                 * unblock the read, and EOF still ends the call. */
+                s.setSoTimeout(0);
                 if (lb) {
                     CState.detail = "loopback: circuit up";
                     startMedia(s, true, false);   /* client leg: capture+send only */
                 } else {
+                    /* caller's channel is up — native phase goes active so
+                     * callStatus can distinguish connected-waiting from dead */
                     CState.detail = "client: channel up";
+                    CState.phase = "active";
                     startMedia(s, true, true);
                 }
             } catch (Throwable t) {

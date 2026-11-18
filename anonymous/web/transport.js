@@ -133,7 +133,16 @@ Transport.prototype.status = function() {
 Transport.prototype.send = function(onion, wireToken) {
     if (!this.available()) return Promise.resolve({ sent: false, error: 'tor bridge unavailable' });
     return this.call('sendMessage', { onion: onion, payload: wireToken })
-        .then(function(r) { return { sent: !!(r && r.sent), error: (r && r.error) || '' }; });
+        .then(function(r) {
+            var out = { sent: !!(r && r.sent), error: (r && r.error) || '' };
+            /* v0.4.1: remember the last failure verbatim so the tor modal can
+             * show the exact socks rep / kernel verdict for PEER delivery —
+             * loopback tells us our side works; this is the cross-device clue. */
+            if (!out.sent && out.error) {
+                Transport.lastSendErr = { onion: String(onion || ''), error: String(out.error), t: Date.now() };
+            }
+            return out;
+        });
 };
 
 /* Drain the native inbox buffer. Returns array of wire tokens (order kept). */
