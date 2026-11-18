@@ -7,8 +7,8 @@ namespace = "org.onionchat"
         applicationId "org.private.anonymous"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 28
-        versionName "0.4.1"
+        versionCode 29
+        versionName "0.4.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +16,31 @@ namespace = "org.onionchat"
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    /* v0.4.2: deterministic signing — the debug build is signed with the
+     * COMMITTED debug.keystore instead of the runner's auto-generated
+     * ~/.android/debug.keystore (a fresh random one every CI run). Same
+     * signature across builds ⇒ APKs install as in-place updates
+     * ("adb install -r" / package-installer Update) WITHOUT uninstalling —
+     * so the app's private data (hidden-service keypair → the .onion
+     * address, the vault, contacts) survives every new build. The keystore
+     * is a DEBUG key only (public passwords android/androiddebugkey) — it
+     * authenticates nothing secret. */
+    signingConfigs {
+        debug {
+            storeFile file('../debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
         }
     }
 }

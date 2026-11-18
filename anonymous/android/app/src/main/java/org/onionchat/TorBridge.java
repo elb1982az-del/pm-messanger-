@@ -92,6 +92,108 @@ public class TorBridge extends Plugin {
         call.resolve();
     }
 
+    /* ---------------- identity backup/restore (0.4.2) ---------------- */
+    /* The hidden-service keypair lives in filesDir/tor/hidden_service/.
+     * hs_ed25519_secret_key + hostname are the whole identity: restoring them
+     * into a fresh install brings back the SAME .onion address. The public
+     * key file is derived by tor from the secret, but we carry it when
+     * present so the restore is byte-identical. */
+
+    private File hsDir() {
+        Context c = TorService.appContext();
+        if (c == null) c = getContext();
+        return new File(new File(c.getFilesDir(), "tor"), "hidden_service");
+    }
+
+    private static byte[] readFileOr(File f) {
+        try {
+            FileInputStream in = new FileInputStream(f);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            in.close();
+            return out.toByteArray();
+        } catch (Throwable t) { return null; }
+    }
+
+    private static void writeFileOr(File f, byte[] b) throws Exception {
+        java.io.FileOutputStream out = new java.io.FileOutputStream(f, false);
+        out.write(b);
+        out.flush();
+        out.close();
+    }
+
+    @PluginMethod
+    public void backupExport(PluginCall call) {
+        JSObject r = new JSObject();
+        try {
+            File d = hsDir();
+            File sec = new File(d, "hs_ed25519_secret_key");
+            File pub = new File(d, "hs_ed25519_public_key");
+            File host = new File(d, "hostname");
+            if (!sec.exists() || sec.length() == 0 || !host.exists()) {
+                r.put("empty", true);
+                r.put("hint", "no hidden-service key on disk yet — run tor once (chip ✓) before exporting");
+                call.resolve(r);
+                return;
+            }
+            byte[] sb = readFileOr(sec);
+            String hostname = new String(readFileOr(host), StandardCharsets.UTF_8).trim();
+            r.put("empty", false);
+            r.put("hostname", hostname);
+            r.put("secretKey", android.util.Base64.encodeToString(sb, android.util.Base64.NO_WRAP));
+            if (pub.exists() && pub.length() > 0) {
+                r.put("publicKey", android.util.Base64.encodeToString(readFileOr(pub), android.util.Base64.NO_WRAP));
+            }
+        } catch (Throwable t) { call.reject("backupExport failed: " + t); return; }
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void backupImport(PluginCall call) {
+        String hostname = call.getString("hostname", "");
+        String secretKey = call.getString("secretKey", "");
+        String publicKey = call.getString("publicKey", "");
+        JSObject r = new JSObject();
+        try {
+            if (!hostname.endsWith(".onion") || secretKey.isEmpty()) {
+                r.put("restored", false);
+                r.put("error", "missing hostname or secret key");
+                call.resolve(r);
+                return;
+            }
+            byte[] sec = android.util.Base64.decode(secretKey, android.util.Base64.NO_WRAP);
+            /* sanity: tor writes "== ed25519v1-secret: type0 ==" + key material */
+            String head = new String(sec, 0, Math.min(24, sec.length), StandardCharsets.UTF_8);
+            if (!head.startsWith("== ed25519v1-secret")) {
+                r.put("restored", false);
+                r.put("error", "secret key does not look like a tor HSv3 ed25519 key");
+                call.resolve(r);
+                return;
+            }
+            File d = hsDir();
+            d.mkdirs();
+            writeFileOr(new File(d, "hs_ed25519_secret_key"), sec);
+            writeFileOr(new File(d, "hostname"), (hostname + "\n").getBytes(StandardCharsets.UTF_8));
+            if (!publicKey.isEmpty()) {
+                writeFileOr(new File(d, "hs_ed25519_public_key"),
+                        android.util.Base64.decode(publicKey, android.util.Base64.NO_WRAP));
+            }
+            r.put("restored", true);
+            r.put("hostname", hostname);
+            /* a running daemon holds the OLD key — it must be restarted to
+             * pick the restored identity up. Stop it here; JS re-kicks. */
+            if (TorService.State.running) {
+                Context c = TorService.appContext() != null ? TorService.appContext() : getContext();
+                try { c.stopService(new Intent(c, TorService.class)); } catch (Throwable ignored) {}
+                TorService.State.running = false;
+                TorService.State.stage = "stopped-for-backup-restore";
+            }
+        } catch (Throwable t) { call.reject("backupImport failed: " + t); return; }
+        call.resolve(r);
+    }
+
     @PluginMethod
     public void callEnd(PluginCall call) {
         VoiceEngine.endCall(call.getString("reason", "hangup"));

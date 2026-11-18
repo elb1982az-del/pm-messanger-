@@ -667,11 +667,105 @@ async function meModal() {
         '<div class="sub" style="margin-top:8px;">Identity bundle (copy with the button — no manual selection needed):</div>' +
         '<div id="me-bundle" class="bundlebox" role="textbox" aria-readonly="true">' + esc(b) + '</div>' +
         '<button id="me-copy">Copy bundle</button>' +
+        '<button id="me-backup" class="ghost">💾 Backup / Restore</button>' +
         '<button id="me-wipe" class="danger ghost">Lock vault now</button>' +
         '<button class="ghost" id="me-close">Close</button>');
     bindTap(el('me-copy'), () => copyText(b, 'bundle copied'));
     el('me-close').onclick = unveil;
     el('me-wipe').onclick = () => { vault.lock(); location.reload(); };
+    el('me-backup').onclick = backupModal;
+}
+
+/* ---------- backup / restore (0.4.2) ----------
+ * ONE pasteable string carries the ENTIRE pairing state:
+ *   - the tor hidden-service keypair (your .onion — survives reinstalls)
+ *   - the whole vault: identity keys, contacts, ratchet sessions, nicknames
+ * Sealed with AES-256-GCM under a backup passphrase (PBKDF2-SHA256, 300k,
+ * same primitives as the vault itself). Anyone holding the string AND the
+ * passphrase IS you — treat it like a private key.
+ * Format: ANONBK1.<salt b64>.<iv b64>.<ciphertext b64>                */
+const BK_PREFIX = 'ANONBK1.';
+
+async function bkDerive(pass, salt) {
+    const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+        { name: 'PBKDF2', hash: 'SHA-256', salt: salt, iterations: 300000 },
+        k, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+function bkB64(u8) { return Vault.u8ToB64(u8); }
+function bkUnB64(s) { return Vault.b64ToU8(s); }
+
+async function backupModal() {
+    veil('<h2 style="color:#7dffce;font-size:.95rem;margin-bottom:6px;">💾 Backup / Restore</h2>' +
+        '<div class="sub" style="margin-top:8px;">Export everything — your .onion keypair, contacts, ratchet sessions, nicknames — as one pasteable string. Restore it after a clean reinstall and you are instantly re-paired with the SAME onion address.</div>' +
+        '<input id="bk-pass" type="password" placeholder="backup passphrase (min 8 chars)">' +
+        '<textarea id="bk-payload" rows="5" placeholder="export: leave empty, then Copy · restore: paste your backup string here"></textarea>' +
+        '<div class="err" id="bk-err"></div>' +
+        '<button id="bk-export">Export &amp; copy</button>' +
+        '<button id="bk-import" class="ghost">Restore from string</button>' +
+        '<button id="bk-cancel" class="ghost">Close</button>');
+    el('bk-cancel').onclick = unveil;
+    el('bk-export').onclick = async () => {
+        const err = el('bk-err'); err.textContent = '';
+        const pass = el('bk-pass').value;
+        if (!pass || pass.length < 8) { err.textContent = '✗ passphrase must be at least 8 characters'; return; }
+        try {
+            const hs = await transport.callMethod('backupExport', {});
+            const payload = {
+                t: 'anon-backup', v: 1, made: Date.now(),
+                hs: (hs && !hs.empty) ? { hostname: hs.hostname, secretKey: hs.secretKey, publicKey: hs.publicKey || '' } : null,
+                vault: { identity: state.identity, contacts: state.contacts, sessions: state.sessions, outbox: state.outbox || [], settings: state.settings }
+            };
+            if (!payload.hs) err.textContent = '⚠ no tor HS key yet — backup will carry contacts/sessions but a DIFFERENT onion on restore. Run tor first and re-export.\n';
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const key = await bkDerive(pass, salt);
+            const pt = new TextEncoder().encode(JSON.stringify(payload));
+            const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, pt));
+            const bk = BK_PREFIX + bkB64(salt) + '.' + bkB64(iv) + '.' + bkB64(ct);
+            el('bk-payload').value = bk;
+            await copyText(bk, 'backup copied — store it somewhere safe (it contains your private keys!)');
+            err.textContent = (err.textContent || '') + '✓ backup built (' + Math.round(bk.length / 1024) + ' KB) and copied.';
+        } catch (e) { err.textContent = '✗ export failed: ' + (e.message || e); }
+    };
+    el('bk-import').onclick = async () => {
+        const err = el('bk-err'); err.textContent = '';
+        const pass = el('bk-pass').value;
+        const raw = el('bk-payload').value.trim();
+        if (!pass) { err.textContent = '✗ enter the backup passphrase above'; return; }
+        if (raw.indexOf(BK_PREFIX) !== 0) { err.textContent = '✗ paste a backup string (starts with ANONBK1.)'; return; }
+        const parts = raw.slice(BK_PREFIX.length).split('.');
+        if (parts.length !== 3) { err.textContent = '✗ malformed backup string'; return; }
+        try {
+            const key = await bkDerive(pass, bkUnB64(parts[0]));
+            const pt = new Uint8Array(await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: bkUnB64(parts[1]) }, key, bkUnB64(parts[2])));
+            const bk = JSON.parse(new TextDecoder().decode(pt));
+            if (bk.t !== 'anon-backup' || !bk.vault) throw new Error('not an Anonymous backup payload');
+            /* 1. restore the hidden-service keypair (same .onion again) */
+            if (bk.hs && bk.hs.hostname && bk.hs.secretKey) {
+                const r = await transport.callMethod('backupImport', bk.hs);
+                if (!r || !r.restored) throw new Error('HS key restore failed: ' + ((r && r.error) || 'unknown'));
+            } else {
+                err.textContent = '⚠ backup carries NO onion key — contacts restored, but the new install gets a fresh onion; peers must re-add you.\n';
+            }
+            /* 2. restore vault fields into the CURRENT vault (this device's
+             * vault passphrase stays; the data is re-sealed under it) */
+            state.identity = bk.vault.identity || state.identity;
+            state.contacts = bk.vault.contacts || {};
+            state.sessions = bk.vault.sessions || {};
+            state.outbox = bk.vault.outbox || [];
+            state.settings = bk.vault.settings || state.settings;
+            await vault.save();
+            /* 3. tor restarts with the restored key (stopped in backupImport) */
+            try { await transport.start(); } catch (e) {}
+            unveil();
+            location.reload();
+        } catch (e) {
+            err.textContent = '✗ restore failed: ' + (e.message || e) + (String(e.message || e).indexOf('wrong passphrase') < 0 ? '' : '');
+        }
+    };
 }
 
 /* Strip java.lang.* boilerplate from native error text: the decisive part is
