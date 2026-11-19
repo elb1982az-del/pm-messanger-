@@ -128,18 +128,25 @@ Transport.prototype.status = function() {
     }.bind(this));
 };
 
-/* One attempt. Returns the full result {sent, error?} — not just the bool —
- * so the UI can surface the native failure reason (socks rep, timeout, …). */
+/* One attempt. Returns the full result {sent, unacked?, error?} — not just
+ * the bool — so the UI can surface the native failure reason (socks rep,
+ * timeout, …). `sent:true, unacked:true` means the whole HTTP POST body was
+ * written to the peer's hidden service but the 200 ack never came back; the
+ * message must NOT be reported as a delivery failure or retried forever. */
 Transport.prototype.send = function(onion, wireToken) {
     if (!this.available()) return Promise.resolve({ sent: false, error: 'tor bridge unavailable' });
     return this.call('sendMessage', { onion: onion, payload: wireToken })
         .then(function(r) {
-            var out = { sent: !!(r && r.sent), error: (r && r.error) || '' };
+            var out = { sent: !!(r && r.sent), unacked: !!(r && r.unacked), error: (r && r.error) || '' };
             /* v0.4.1: remember the last failure verbatim so the tor modal can
              * show the exact socks rep / kernel verdict for PEER delivery —
              * loopback tells us our side works; this is the cross-device clue. */
             if (!out.sent && out.error) {
                 Transport.lastSendErr = { onion: String(onion || ''), error: String(out.error), t: Date.now() };
+            }
+            if (out.sent && out.unacked) {
+                /* visible in the tor modal: body WAS flushed, peer ack lost */
+                Transport.lastSendUnacked = { onion: String(onion || ''), t: Date.now() };
             }
             return out;
         });

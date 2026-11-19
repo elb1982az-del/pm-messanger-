@@ -59,7 +59,9 @@ public final class VoiceEngine {
 
     private static final int SAMPLE_RATE_WB = 16000;
     private static final int SAMPLE_RATE_NB = 8000;
-    private static final long ARM_WAIT_MS = 60000;   // incoming conn waits for the callee to arm (slow Accept must not kill the call)
+    private static final long ARM_WAIT_MS = 120000;  // incoming conn waits for the callee to arm (slow Accept must not kill the call)
+    private static final long CONNECT_RETRY_MS = 5000;    // caller: pause between rendezvous retries
+    private static final long CONNECT_DEADLINE_MS = 120000; // caller: keep trying across the whole ring window
     private static final int JITTER_START = 8;
     private static final int JITTER_MAX = 24;
 
@@ -83,6 +85,14 @@ public final class VoiceEngine {
     private static volatile byte[] callKey = null;
     private static volatile boolean loopbackMode = false;
 
+    /* Call generation (0.4.3). Every teardown/start bumps it. Media threads
+     * capture the generation they were started for and may only end/flip the
+     * call when they are STILL that generation. Before this, a socket left
+     * over from a reconnect (or a duplicate accept-path callStart) reached
+     * recvLoop's finally and ran endCall("channel closed") against the brand
+     * new call — exactly the "call and channel closed" verdict. */
+    private static volatile long callGen = 0;
+
     private static final AtomicBoolean micRunning = new AtomicBoolean(false);
     public static final AtomicBoolean MIC_RUNNING = micRunning;
     private static final AtomicBoolean netRunning = new AtomicBoolean(false);
@@ -99,27 +109,50 @@ public final class VoiceEngine {
      * it is already up (the accept-signal reconnect path) is a no-op — this
      * lets JS re-callStart on accept without killing a live channel. */
     public static void startOutgoing(String onion, String cidHex, String keyB64) {
+        final String cid = cidHex == null ? "" : cidHex;
+        final long gen;
         synchronized (lock) {
-            if (CState.phase.equals("active") && CState.cid.equals(cidHex == null ? "" : cidHex)
-                    && callSock != null && !callSock.isClosed()) {
-                CState.detail = "client: channel already up (reconnect no-op)";
+            boolean liveSock = callSock != null && !callSock.isClosed();
+            /* Same-cid re-entry is a no-op while the channel is up OR still
+             * connecting. The accept-signal path re-calls callStart; the old
+             * "active only" guard let that path stopEverything() the live
+             * client leg, whose recvLoop then ended the new call. */
+            if (cid.equals(CState.cid)
+                    && (("active".equals(CState.phase) && liveSock)
+                        || "calling".equals(CState.phase))) {
+                CState.detail = "client: already " + CState.phase + " (reconnect no-op)";
                 return;
             }
-            stopEverything();
-            CState.cid = cidHex == null ? "" : cidHex;
+            stopEverything();        // bumps callGen
+            gen = callGen;
+            CState.cid = cid;
             callKey = b64(keyB64);
             loopbackMode = false;
             CState.phase = "calling";
             CState.detail = "client: connecting";
         }
-        clientThread(onion, cidHex, false);
+        clientThread(onion, cid, false, gen);
     }
 
     /** Callee: arm so an arriving 9879 connection carrying this cid is accepted. */
     public static void armIncoming(String cidHex, String keyB64) {
+        final String cid = cidHex == null ? "" : cidHex;
         synchronized (lock) {
-            stopEverything();
-            CState.cid = cidHex == null ? "" : cidHex;
+            /* double-tap Accept / duplicate invite must not tear down a live
+             * or already-armed channel */
+            byte[] existing = armed.get(cid);
+            if (cid.equals(CState.cid) && existing != null) {
+                CState.phase = "ringing";
+                CState.detail = "server: already armed";
+                ensureVoiceServer();
+                return;
+            }
+            if (cid.equals(CState.cid) && "active".equals(CState.phase)) {
+                CState.detail = "server: already active (arm no-op)";
+                return;
+            }
+            stopEverything();        // bumps callGen
+            CState.cid = cid;
             callKey = b64(keyB64);
             loopbackMode = false;
             armed.put(CState.cid, callKey);
@@ -135,8 +168,10 @@ public final class VoiceEngine {
         final byte[] key = new byte[16];
         rng.nextBytes(key);
         final String keyB64 = android.util.Base64.encodeToString(key, android.util.Base64.NO_WRAP);
+        final long gen;
         synchronized (lock) {
-            stopEverything();
+            stopEverything();        // bumps callGen
+            gen = callGen;
             CState.cid = cid;
             callKey = key;
             loopbackMode = true;
@@ -146,7 +181,7 @@ public final class VoiceEngine {
             armed.put(cid, key);            /* own server will match this */
         }
         ensureVoiceServer();
-        clientThread(ownOnion, cid, true);
+        clientThread(ownOnion, cid, true, gen);
     }
 
     public static void stopLoopback() {
@@ -160,10 +195,21 @@ public final class VoiceEngine {
 
     public static void endCall(String reason) {
         synchronized (lock) {
-            stopEverything();
+            stopEverything();        // bumps callGen; any older media thread is now inert
             CState.loopback = false;
             CState.phase = "ended";
             CState.detail = "ended: " + (reason == null ? "local" : reason);
+        }
+    }
+
+    /** End the call ONLY if the caller's generation is still current. */
+    private static void endCallFor(long gen, String reason) {
+        synchronized (lock) {
+            if (gen != callGen) return;          // stale socket/thread — never touch a newer call
+            stopEverything();                    // bumps again
+            CState.loopback = false;
+            CState.phase = "ended";
+            CState.detail = "ended: " + reason;
         }
     }
 
@@ -219,7 +265,14 @@ public final class VoiceEngine {
             InputStream is = s.getInputStream();
             byte[] cidB = readN(is, 8);
             if (cidB == null) { try { s.close(); } catch (Throwable ignored) {} return; }
-            String cid = bytesToHex(cidB);
+            final String cid = bytesToHex(cidB);
+            /* Media silence is legal. Clear the handshake timeout NOW, before
+             * any media thread starts: the old code did this after startMedia,
+             * so recvLoop's first read could still inherit the 10 s timeout
+             * and kill a good call that had not sent a frame yet. */
+            s.setSoTimeout(0);
+            final long genAtAccept;
+            synchronized (lock) { genAtAccept = callGen; }
             byte[] key = null;
             boolean isLoopback = false;
             long waited = 0;
@@ -229,30 +282,49 @@ public final class VoiceEngine {
                     isLoopback = loopbackMode && CState.cid.equals(cid);
                 }
                 if (key != null) break;
+                synchronized (lock) {
+                    /* a newer call/teardown superseded this waiting socket */
+                    if (genAtAccept != callGen && armed.get(cid) == null) {
+                        try { s.close(); } catch (Throwable ignored) {}
+                        return;
+                    }
+                }
                 Thread.sleep(500);
                 waited += 500;
             }
             if (key == null) { try { s.close(); } catch (Throwable ignored) {} return; }
             synchronized (lock) {
+                /* Close the race between reading `armed` and applying it: a
+                 * teardown or a different call may have run in that window.
+                 * Proceed only if this cid is still the intended call and (on
+                 * a generation change) still armed. */
+                if (genAtAccept != callGen) {
+                    byte[] now = armed.get(cid);
+                    if (now == null || !cid.equals(CState.cid)) {
+                        try { s.close(); } catch (Throwable ignored) {}
+                        return;
+                    }
+                    key = now;
+                }
+                isLoopback = loopbackMode && cid.equals(CState.cid);
                 if (isLoopback) {
                     /* same process owns both legs: do NOT stop the client side */
+                    long gen = callGen;
                     callSock = s;
                     CState.phase = "active";
                     CState.detail = "loopback: circuit up";
-                    startMedia(s, false, true);   /* server leg: receive+play only */
+                    startMedia(s, false, true, gen);   /* server leg: receive+play only */
                 } else {
-                    stopEverything();
+                    stopEverything();        // bumps callGen
+                    long gen = callGen;
                     callSock = s;
                     callKey = key;
                     CState.cid = cid;
                     CState.phase = "active";
                     CState.detail = "server: channel up";
-                    startMedia(s, true, true);
+                    startMedia(s, true, true, gen);
                 }
             }
-            /* v0.4.1: no read timeout on the media channel (caller sends
-             * continuously, but silence must never kill the call) */
-            s.setSoTimeout(0);
         } catch (Throwable t) {
             CState.detail = "voice accept: " + t;
             try { s.close(); } catch (Throwable ignored) {}
@@ -261,73 +333,73 @@ public final class VoiceEngine {
 
     /* ======================= client leg ======================= */
 
-    private static void clientThread(String onion, String cid, boolean lb) {
+    private static void clientThread(String onion, String cid, boolean lb, long gen) {
         new Thread(() -> {
             Socket s = null;
-            /* v0.4.1: the first rendezvous to a peer HS routinely takes 3-8s
-             * and can spike past 20s; give the SOCKS CONNECT 45s, and retry
-             * ONCE after 8s if the first attempt fails while we are still in
-             * the "calling" phase with an unchanged cid (the invite may still
-             * be in flight / a transient circuit failure). */
-            for (int attempt = 0; attempt < 2 && s == null; attempt++) {
+            final long deadline = System.currentTimeMillis() + CONNECT_DEADLINE_MS;
+            int attempt = 0;
+            /* Keep trying for the whole ring window (0.4.3). The callee arms
+             * only after a human taps Accept, and a v3 rendezvous can fail
+             * transiently many times while that happens; the old two-shot
+             * retry gave up ~53 s in and ended a call the peer could still
+             * answer. */
+            while (s == null) {
+                synchronized (lock) {
+                    if (gen != callGen || !cid.equals(CState.cid)) return;
+                }
                 try {
                     s = socksConnect(onion, VOICE_PORT, 45000);
                 } catch (Throwable ce) {
+                    attempt++;
+                    boolean giveUp;
                     synchronized (lock) {
-                        boolean stillCalling = "calling".equals(CState.phase) && CState.cid.equals(cid);
-                        if (attempt == 0 && stillCalling) {
-                            CState.detail = "client: connect attempt 1 failed (" + ce + ") — retrying in 8s";
-                        } else {
-                            CState.detail = (lb ? "loopback failed: " : "client failed: ") + ce;
-                            if (!"active".equals(CState.phase)) CState.phase = "ended";
-                        }
+                        if (gen != callGen || !cid.equals(CState.cid)) return;
+                        giveUp = System.currentTimeMillis() >= deadline;
+                        CState.detail = "client: connect attempt " + attempt + " failed (" + ce + ")"
+                                + (giveUp ? "" : " — retrying");
+                        if (giveUp) CState.phase = "ended";
                     }
-                    if (attempt == 0 && s == null) {
-                        boolean stillCalling;
-                        synchronized (lock) { stillCalling = "calling".equals(CState.phase) && CState.cid.equals(cid); }
-                        if (!stillCalling) return;
-                        try { Thread.sleep(8000); } catch (InterruptedException ie) { return; }
-                    }
+                    if (giveUp) return;
+                    try { Thread.sleep(CONNECT_RETRY_MS); } catch (InterruptedException ie) { return; }
                 }
             }
-            if (s == null) return;
             try {
                 OutputStream os = s.getOutputStream();
                 os.write(hexToBytes(cid));
                 os.flush();
                 synchronized (lock) {
-                    if (!CState.cid.equals(cid)) { try { s.close(); } catch (Throwable ignored) {} return; }
+                    if (gen != callGen || !cid.equals(CState.cid)) {
+                        try { s.close(); } catch (Throwable ignored) {}
+                        return;
+                    }
                     callSock = s;
+                    if (lb) {
+                        CState.detail = "loopback: circuit up";
+                    } else {
+                        /* channel is up, but the callee has not accepted yet —
+                         * stay "calling" until the first media frame proves
+                         * their capture side is live. */
+                        CState.detail = "client: channel up — waiting for peer";
+                    }
                 }
-                /* v0.4.1: NO read timeout on the media channel — the callee
-                 * sends nothing until they arm (human taps Accept, invite
-                 * poll can take seconds). A 15s timeout used to kill the
-                 * caller's channel with "channel closed" during ringing.
-                 * Silence is legal; endCall()/hangup closes the socket to
-                 * unblock the read, and EOF still ends the call. */
                 s.setSoTimeout(0);
-                if (lb) {
-                    CState.detail = "loopback: circuit up";
-                    startMedia(s, true, false);   /* client leg: capture+send only */
-                } else {
-                    /* caller's channel is up — native phase goes active so
-                     * callStatus can distinguish connected-waiting from dead */
-                    CState.detail = "client: channel up";
-                    CState.phase = "active";
-                    startMedia(s, true, true);
-                }
+                startMedia(s, true, !lb, gen);
             } catch (Throwable t) {
-                CState.detail = (lb ? "loopback failed: " : "client failed: ") + t;
                 synchronized (lock) {
-                    if (!"active".equals(CState.phase)) CState.phase = "ended";
+                    if (gen == callGen) {
+                        CState.detail = (lb ? "loopback failed: " : "client failed: ") + t;
+                        if (!"active".equals(CState.phase)) CState.phase = "ended";
+                    }
                 }
+                try { s.close(); } catch (Throwable ignored) {}
             }
         }, lb ? "anon-voice-lb" : "anon-voice-client").start();
     }
 
     /* ======================= media pipeline ======================= */
 
-    private static void startMedia(Socket sock, boolean capture, boolean playback) {
+    private static void startMedia(Socket sock, boolean capture, boolean playback, long gen) {
+        if (gen != callGen) return;                 // superseded before we started
         boolean wb = false;
         try { wb = hasCodec("audio/amr-wb"); } catch (Throwable t) { wb = false; }
         final int rate = wb ? SAMPLE_RATE_WB : SAMPLE_RATE_NB;
@@ -335,7 +407,7 @@ public final class VoiceEngine {
 
         if (capture) {
             micRunning.set(true);
-            Thread t = new Thread(() -> captureLoop(sock, mime, rate), "anon-voice-mic");
+            Thread t = new Thread(() -> captureLoop(sock, mime, rate, gen), "anon-voice-mic");
             t.setDaemon(true);
             t.start();
         }
@@ -343,17 +415,17 @@ public final class VoiceEngine {
             /* the recv thread builds the jitter queue; the play thread drains it */
             netRunning.set(true);
             jitterRef = new ConcurrentLinkedQueue<>();
-            Thread r = new Thread(() -> recvLoop(sock), "anon-voice-recv");
+            Thread r = new Thread(() -> recvLoop(sock, gen), "anon-voice-recv");
             r.setDaemon(true);
             r.start();
             playRunning.set(true);
-            Thread p = new Thread(() -> playLoop(mime, rate), "anon-voice-play");
+            Thread p = new Thread(() -> playLoop(mime, rate, gen), "anon-voice-play");
             p.setDaemon(true);
             p.start();
         }
     }
 
-    private static void captureLoop(Socket sock, String mime, int rate) {
+    private static void captureLoop(Socket sock, String mime, int rate, long gen) {
         MediaCodec enc = null;
         AudioRecord rec = null;
         try {
@@ -373,7 +445,7 @@ public final class VoiceEngine {
             ArrayDeque<byte[]> frameBatch = new ArrayDeque<>();
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             short[] pcm = new short[rate / 50]; /* 20 ms */
-            while (micRunning.get() && !sock.isClosed()) {
+            while (micRunning.get() && gen == callGen && !sock.isClosed()) {
                 boolean muted = CState.micMuted;
                 int got = rec.read(pcm, 0, pcm.length);
                 if (got <= 0) { Thread.sleep(10); continue; }
@@ -394,7 +466,7 @@ public final class VoiceEngine {
                     ob.get(frame);
                     frameBatch.add(frame);
                     if (frameBatch.size() >= 4) {
-                        sendFrame(sock, concat(frameBatch));
+                        sendFrame(sock, concat(frameBatch), gen);
                         frameBatch.clear();
                     }
                     enc.releaseOutputBuffer(outIdx, false);
@@ -402,17 +474,20 @@ public final class VoiceEngine {
                 }
             }
         } catch (Throwable t) {
-            CState.detail = "mic: " + t;
+            synchronized (lock) {
+                if (gen == callGen) CState.detail = "mic: " + t;
+            }
         } finally {
             try { if (rec != null) rec.stop(); } catch (Throwable ignored) {}
             try { if (rec != null) rec.release(); } catch (Throwable ignored) {}
             try { if (enc != null) enc.stop(); } catch (Throwable ignored) {}
             try { if (enc != null) enc.release(); } catch (Throwable ignored) {}
-            micRunning.set(false);
+            /* only the CURRENT call may clear the shared flag */
+            if (gen == callGen) micRunning.set(false);
         }
     }
 
-    private static void sendFrame(Socket sock, byte[] plain) {
+    private static void sendFrame(Socket sock, byte[] plain, long gen) {
         try {
             byte[] nonce = new byte[12];
             synchronized (rng) { rng.nextBytes(nonce); }
@@ -426,18 +501,21 @@ public final class VoiceEngine {
             os.write(framed);
             os.flush();
         } catch (Throwable t) {
-            CState.detail = "send: " + t;
-            endCall("send failed");
+            synchronized (lock) {
+                if (gen != callGen) return;      // stale socket — never kill a live call
+                CState.detail = "send: " + t;
+            }
+            endCallFor(gen, "send failed");
         }
     }
 
-    private static void recvLoop(Socket sock) {
+    private static void recvLoop(Socket sock, long gen) {
         try {
             InputStream is = sock.getInputStream();
             ConcurrentLinkedQueue<byte[]> jitter = jitterRef;
             if (jitter == null) jitter = new ConcurrentLinkedQueue<>();
             jitterRef = jitter;
-            while (netRunning.get() && !sock.isClosed()) {
+            while (netRunning.get() && gen == callGen && !sock.isClosed()) {
                 byte[] l2 = readN(is, 2);
                 if (l2 == null) break;
                 int framedLen = ((l2[0] & 0xff) << 8) | (l2[1] & 0xff);
@@ -449,19 +527,36 @@ public final class VoiceEngine {
                 try { plain = gcm(callKey, nonce, ct, false); }
                 catch (Throwable badFrame) { continue; }
                 if (plain != null && plain.length > 0) {
+                    /* first real audio from the peer = the callee accepted and
+                     * their capture side is live; only now is the call active */
+                    if (CState.phase.equals("calling")) {
+                        synchronized (lock) {
+                            if (gen == callGen && CState.phase.equals("calling")) {
+                                CState.phase = "active";
+                                CState.detail = "client: media flowing";
+                            }
+                        }
+                    }
                     jitter.add(plain);
                     while (jitter.size() > JITTER_MAX) jitter.poll();
                 }
             }
         } catch (Throwable t) {
-            CState.detail = "recv: " + t;
+            synchronized (lock) {
+                if (gen == callGen) CState.detail = "recv: " + t;
+            }
         } finally {
-            netRunning.set(false);
-            if (!loopbackMode) endCall("channel closed");
+            if (gen == callGen) netRunning.set(false);
+            /* Only THIS generation may end the call. A stale socket left over
+             * from a reconnect previously ran endCall("channel closed") and
+             * killed the live call seconds after it connected. */
+            boolean lb;
+            synchronized (lock) { lb = loopbackMode; }
+            if (!lb) endCallFor(gen, "channel closed");
         }
     }
 
-    private static void playLoop(String mime, int rate) {
+    private static void playLoop(String mime, int rate, long gen) {
         MediaCodec dec = null;
         AudioTrack track = null;
         try {
@@ -477,7 +572,7 @@ public final class VoiceEngine {
 
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             int target = JITTER_START;
-            while (playRunning.get()) {
+            while (playRunning.get() && gen == callGen) {
                 ConcurrentLinkedQueue<byte[]> jitter = jitterRef;
                 if (jitter == null) { Thread.sleep(20); continue; }
                 byte[] frame = jitter.poll();
@@ -511,13 +606,15 @@ public final class VoiceEngine {
                 }
             }
         } catch (Throwable t) {
-            CState.detail = "play: " + t;
+            synchronized (lock) {
+                if (gen == callGen) CState.detail = "play: " + t;
+            }
         } finally {
             try { if (track != null) track.stop(); } catch (Throwable ignored) {}
             try { if (track != null) track.release(); } catch (Throwable ignored) {}
             try { if (dec != null) dec.stop(); } catch (Throwable ignored) {}
             try { if (dec != null) dec.release(); } catch (Throwable ignored) {}
-            playRunning.set(false);
+            if (gen == callGen) playRunning.set(false);
         }
     }
 
@@ -591,13 +688,16 @@ public final class VoiceEngine {
     }
 
     private static void stopEverything() {
-        micRunning.set(false);
-        netRunning.set(false);
-        playRunning.set(false);
-        try { if (callSock != null) callSock.close(); } catch (Throwable ignored) {}
-        callSock = null;
-        jitterRef = null;
-        armed.clear();
+        synchronized (lock) {
+            callGen++;                       // invalidate every outstanding media thread
+            micRunning.set(false);
+            netRunning.set(false);
+            playRunning.set(false);
+            try { if (callSock != null) callSock.close(); } catch (Throwable ignored) {}
+            callSock = null;
+            jitterRef = null;
+            armed.clear();
+        }
     }
 
     private static byte[] b64(String s) {

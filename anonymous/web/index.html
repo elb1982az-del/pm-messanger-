@@ -167,6 +167,7 @@ let state = null;             // vault.data
 let sessions = {};            // contactKey -> live RatchetState
 let messages = {};            // contactKey -> [{who:'me'|'them'|'sys', text, t}]
 let seenInbound = {};         // dedupe of delivered tokens
+let pendingInbound = {};      // token -> {tries} — retried while a session is still forming
 let currentKey = null;        // open chat
 let online = null;            // last tor status
 let lastLoopback = '';        // last loopback self-test report (rendered in tor modal)
@@ -221,17 +222,35 @@ async function boot() {
 async function enterApp() {
     el('gate').classList.add('hidden');
     el('app').classList.remove('hidden');
+    /* 0.4.3 — one-time ratchet reset. Before the sender-binding fix, a first
+     * envelope could be stored under the FIRST contact in the map. Such a
+     * session keeps encrypting replies/call signals to the wrong onion, and
+     * there is no way to infer the right owner for its later (header-less)
+     * tokens. Both phones run this build, so dropping the old sessions makes
+     * the next message a clean first envelope that binds by header.ikA.
+     * Outbox tokens belong to the old sessions and are dropped with them. */
+    state.settings = state.settings || {};
+    let rekeyed = false;
+    if ((state.settings.ratchetEpoch || 1) < 2) {
+        rekeyed = Object.keys(state.sessions || {}).length > 0 || (state.outbox || []).length > 0;
+        state.sessions = {};
+        state.outbox = [];
+        state.settings.ratchetEpoch = 2;
+        try { await vault.save(); } catch (e) {}
+    }
     sessions = {};
     for (const k of Object.keys(state.sessions || {})) {
         try { sessions[k] = CryptoCore.loadState(state.sessions[k].dump); } catch (e) {}
     }
     messages = {};
     seenInbound = {};
+    pendingInbound = {};
     renderList();
     try { await transport.start(); } catch (e) { toast('tor start failed: ' + (e && e.message || e), true); }
     setInterval(tick, Math.max(2000, (state.settings && state.settings.pollMs) || 4000));
     setInterval(sweep, 30000);
     sweep();
+    if (rekeyed) setTimeout(() => toast('✓ 0.4.3 transport re-keyed — the next message opens a fresh, correctly-bound session'), 1200);
 }
 
 /* ---------- crypto session handling ---------- */
@@ -261,77 +280,186 @@ async function pushText(key, text, encryptNow) {
 }
 
 /* ---------- outbox / poll / sweep ---------- */
+
+/* Bound a network call so a wedged SOCKS send can never freeze the whole
+ * tick loop (0.4.3). The native thread may still finish; retrying the SAME
+ * token later is safe because the receiver dedupes tokens. */
+function withTimeout(p, ms, fallback) {
+    let to = null;
+    const t = new Promise(resolve => { to = setTimeout(() => resolve(fallback), ms); });
+    return Promise.race([p, t]).finally(() => { if (to) clearTimeout(to); });
+}
+
 async function tick() {
     online = await transport.status();
     renderChip();
-    if (!state.outbox) state.outbox = [];
+
+    /* INBOUND FIRST (0.4.3): accept/hangup are what keep a call alive. A
+     * slow or blocked outbound send used to run before poll(), so a peer
+     * circuit that stalled for up to 180 s delayed every inbound signal —
+     * the call appeared to "close immediately" while the UI never saw the
+     * accept. Poll and decrypt before touching the outbox. */
     if (online.ready) {
-        const left = [];
-        for (const it of state.outbox) {
-            const r = await transport.send(it.onion, it.token).catch(e => ({ sent: false, error: String(e && e.message || e) }));
-            if (r.sent) { /* delivered — drop from queue */ }
-            else {
-                it.tries = (it.tries || 0) + 1;
-                left.push(it);
-                if (it.tries % 4 === 0) pushText(it.key, '⚠ delivery attempt ' + it.tries + ' failed: ' + (r.error ? cleanErr(r.error) : 'no report from native send (peer hidden service unreachable?)'), true);
-            }
-        }
-        if (left.length !== state.outbox.length) { state.outbox = left; vault.save(); }
         try {
             const inbox = await transport.poll();
             for (const token of inbox) {
                 if (typeof token === 'string' && token.indexOf('loopback:') === 0) continue;   // self-test probes never enter the ratchet path
                 await processInbound(token);
             }
+            /* Retry tokens that arrived before their session could be formed
+             * (e.g. a second message landed ahead of the first envelope that
+             * carries ikA). The inbox has already handed them over, so
+             * without this sweep they would be stuck in pendingInbound until
+             * MAX_INBOUND_TRIES and then dropped. */
+            for (const token of Object.keys(pendingInbound)) {
+                await processInbound(token);
+            }
         } catch (e) {}
     }
-    /* call-state reconciliation (0.4.0): native verdicts decide phase — a
-     * closed channel or failed client ends the UI even without signaling. */
+
+    /* call-state reconciliation (0.4.0/0.4.3): native verdicts decide phase —
+     * a closed channel or failed client ends the UI even without signaling. */
     if (call && call.phase !== 'ended') {
         try {
             const cs = await transport.callMethod('callStatus', {});
             if (el('call-detail') && !el('call-ui').classList.contains('hidden')) {
                 el('call-detail').textContent = cs.detail || '';
             }
-            if (cs.phase === 'ended' && call.phase === 'active') {
-                endCallUi('channel closed' + (cs.detail ? ' — ' + cs.detail : ''));
-            }
-            if (call.phase === 'ringing-out' && cs.phase === 'ended') {
-                endCallUi('call failed: ' + (cs.detail || 'no channel'));
+            if (call && cs.phase === 'ended') {
+                const why = call.phase === 'ringing-out' ? 'call failed: ' : 'channel closed';
+                endCallUi(why + (cs.detail ? ' — ' + cs.detail : ''));
             }
         } catch (e) {}
     }
+
+    /* Outbox runs in the background. Waiting for a SOCKS send here (up to
+     * 180 s) used to freeze polling for the whole interval. */
+    if (online.ready) flushOutbox();
 }
+
+let outboxBusy = false;
+async function flushOutbox() {
+    if (outboxBusy) return;
+    if (!state.outbox || !state.outbox.length) return;
+    outboxBusy = true;
+    try {
+        let attempted = 0;
+        for (const it of state.outbox) {
+            /* one or two per pass: never monopolise the queue */
+            if (attempted >= 2 || it.done) continue;
+            attempted++;
+            const r = await withTimeout(
+                transport.send(it.onion, it.token).catch(e => ({ sent: false, error: String(e && e.message || e) })),
+                120000, { sent: false, error: 'send attempt timed out — still queued' });
+            if (r.sent) {
+                it.done = true;                 /* delivered (acked or flushed) */
+            } else {
+                it.tries = (it.tries || 0) + 1;
+                if (it.tries % 4 === 0) {
+                    pushText(it.key, '⚠ delivery attempt ' + it.tries + ' failed: ' + (r.error ? cleanErr(r.error) : 'no report from native send (peer hidden service unreachable?)'), true);
+                }
+            }
+        }
+        /* keep anything appended by sendMessage() during the awaits */
+        const before = state.outbox.length;
+        state.outbox = state.outbox.filter(it => !it.done);
+        if (state.outbox.length !== before) vault.save();
+    } finally {
+        outboxBusy = false;
+    }
+}
+
+function contactIdentityB64(key) {
+    const c = state.contacts[key];
+    if (!c || !c.bundleText) return null;
+    try { return JSON.parse(c.bundleText).ik || null; } catch (e) { return null; }
+}
+
+/* A decrypted payload is either chat text or call signaling (0.4.0+). Both
+ * paths must dispatch identically — including on the FIRST envelope, which
+ * used to fall through to deliver() and silently swallow a call invite. */
+async function dispatchPlain(key, plain) {
+    if (plain && plain.indexOf('{"t":"call"') === 0) {
+        try { await handleCallSignal(key, JSON.parse(plain)); } catch (e) {}
+        return;
+    }
+    deliver(key, plain);
+}
+
+const MAX_INBOUND_TRIES = 30;
 
 async function processInbound(token) {
     if (!token || seenInbound[token]) return;
-    seenInbound[token] = true;
-    /* try each contact on a throwaway clone so failed probes can't desync */
-    for (const key of Object.keys(state.contacts)) {
+    /* v0.4.3: only mark a token delivered AFTER it actually decrypts. A token
+     * that arrives while the other side is still opening the session (or a
+     * call invite that is the first-ever envelope) is retried for a few polls
+     * instead of being silently dropped forever. */
+    const pending = pendingInbound[token];
+    if (pending && pending.tries >= MAX_INBOUND_TRIES) {
+        seenInbound[token] = true;
+        delete pendingInbound[token];
+        return;
+    }
+    /* The first envelope names its sender in the clear (header.ikA). The old
+     * loop opened a responder against EVERY contact and accepted whichever
+     * one happened to be first in the map — a stale/re-added contact could
+     * decrypt the message, steal the session, and send every reply/signal to
+     * the wrong onion. That is the 0.4.3 cross-device root cause. */
+    const ikA = CryptoCore.envelopeIdentity ? CryptoCore.envelopeIdentity(token) : null;
+    let handled = false;
+    for (const key of Object.keys(state.contacts || {})) {
         const st0 = sessions[key];
         if (st0) {
             try {
                 const clone = CryptoCore.loadState(CryptoCore.dumpState(st0));
                 const plain = await CryptoCore.ratchetDecrypt(clone, token);
-                adopt(key, clone, st0);
-                /* call signaling rides the same ratchet envelope (0.4.0) */
-                if (plain && plain.indexOf('{"t":"call"') === 0) {
-                    try { await handleCallSignal(key, JSON.parse(plain)); } catch (e) {}
-                    return;
+                /* SELF-HEAL (0.4.3): if the session records a peer identity
+                 * that does not match the contact it is stored under, the old
+                 * build misbound it. Rehome the session to the matching
+                 * contact before replying, otherwise every reply/signal keeps
+                 * going to the wrong onion. */
+                let owner = key;
+                const peerIk = clone.peerIk;
+                if (peerIk && contactIdentityB64(key) !== peerIk) {
+                    const right = Object.keys(state.contacts || {})
+                        .find(k2 => contactIdentityB64(k2) === peerIk);
+                    if (right) {
+                        delete sessions[key];
+                        if (state.sessions) delete state.sessions[key];
+                        owner = right;
+                    }
                 }
-                deliver(key, plain);
-                return;
+                adopt(owner, clone, st0);
+                handled = true;
+                await dispatchPlain(owner, plain);
+                break;
             } catch (e) {}
         }
+        /* Responder path is only legal for the contact whose identity key
+         * matches the sender named in this envelope. */
+        if (!ikA || contactIdentityB64(key) !== ikA) continue;
         try {
             const fresh = CryptoCore.openResponder(state.identity.secrets);
             const plain = await CryptoCore.ratchetDecrypt(fresh, token);
             persistSession(key, fresh);
-            deliver(key, plain);
-            return;
+            handled = true;
+            await dispatchPlain(key, plain);
+            break;
         } catch (e) {}
     }
-    toast('[unadded peer] message arrived from an onion we have not added — add their bundle first.', true);
+    if (handled) {
+        seenInbound[token] = true;
+        delete pendingInbound[token];
+        return;
+    }
+    const p = pendingInbound[token] || { tries: 0 };
+    p.tries++;
+    pendingInbound[token] = p;
+    if (p.tries >= MAX_INBOUND_TRIES) {
+        seenInbound[token] = true;
+        delete pendingInbound[token];
+        toast('[unadded peer] message arrived from an onion we have not added (or whose bundle does not match) — add their current bundle first.', true);
+    }
 }
 
 function adopt(key, winner, loser) { persistSession(key, winner); }
@@ -378,17 +506,20 @@ async function handleCallSignal(ckey, m) {
         showCallUi();
         pushText(call.ckey, '📞 call connected');
         toast('📞 call connected');
-        /* v0.4.1: the early channel (opened right after the invite) may have
-         * died while the callee was deciding — if native isn't active yet,
-         * reconnect now that the callee is armed. startOutgoing is idempotent
-         * for the same cid, so a still-live channel is never killed. */
+        /* v0.4.3: the early channel (opened right after the invite) may have
+         * died while the callee was deciding. ONLY respawn it when native is
+         * truly finished (ended/idle). Re-calling callStart while it is still
+         * "calling" used to stopEverything() the live client leg, whose
+         * recvLoop then reported "channel closed" on the brand-new call. */
         (async () => {
             try {
                 const cs = await transport.callMethod('callStatus', {});
-                if (call && call.phase === 'active' && cs.phase !== 'active') {
-                    pushText(call.ckey, '📞 re-establishing voice channel…');
-                    await transport.callMethod('callStart', { onion: call.onion, cid: call.cid, key: call.key });
-                }
+                if (!call || call.phase !== 'active') return;
+                const p = String(cs.phase || '');
+                if (p === 'active' || p === 'calling' || p === 'ringing') return; /* already moving */
+                if (p !== 'ended' && p !== 'idle') return;
+                pushText(call.ckey, '📞 re-establishing voice channel…');
+                await transport.callMethod('callStart', { onion: call.onion, cid: call.cid, key: call.key });
             } catch (e) {}
         })();
     } else if (m.st === 'reject') {
@@ -451,7 +582,14 @@ function showCallUi() {
 function endCallUi(why) {
     if (callTimerInt) { clearInterval(callTimerInt); callTimerInt = null; }
     el('call-ui').classList.add('hidden');
-    if (call) pushText(call.ckey, '📞 call ended' + (why ? ' — ' + why : ''));
+    /* make sure the native media channel is torn down for EVERY path
+     * (peer reject/hangup/busy, channel death, watchdog) — not just the
+     * explicit hang-up button. Without this a rejected call could leave the
+     * callee armed and the caller's client socket streaming into nowhere. */
+    if (call) {
+        try { transport.callMethod('callEnd', { reason: why || 'ended' }).catch(() => {}); } catch (e) {}
+        pushText(call.ckey, '📞 call ended' + (why ? ' — ' + why : ''));
+    }
     call = null;
     if (why) toast('📞 ' + why);
 }
@@ -464,13 +602,21 @@ el('btn-call').onclick = async () => {
     if (mic.unsupported) { toast('voice needs the native bridge — open in the app, not http mode', true); return; }
     if (!mic.granted) { toast('microphone permission missing — reinstall the app and allow mic', true); return; }
     if (!online.ready) { toast('tor not ready — wait for the chip to go ✓', true); return; }
-    if (!sessions[key]) { toast('no session yet — send a message to this peer first', true); return; }
+    /* v0.4.3: a call is legal before the first text. The invite itself is a
+     * valid first ratchet envelope (it names ikA), so open the session here
+     * instead of refusing until a message has been sent. */
+    let st = sessions[key];
+    if (!st) {
+        try { st = await ensureSession(key); }
+        catch (e) { toast('could not open a session: ' + (e.message || e), true); return; }
+    }
+    if (!st) { toast('could not open a session for this contact', true); return; }
     const cid = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(x => x.toString(16).padStart(2, '0')).join('');
     const keyB = CryptoCore.b64.u8ToB64(new Uint8Array(crypto.getRandomValues(new Uint8Array(16))));
     call = { cid, key: keyB, role: 'caller', phase: 'ringing-out', ckey: key, name: c.name || 'peer', onion: c.onion, startTs: 0 };
     try {
-        const token = await CryptoCore.ratchetEncrypt(sessions[key], JSON.stringify({ t: 'call', st: 'invite', cid, k: keyB }));
-        persistSession(key, sessions[key]);
+        const token = await CryptoCore.ratchetEncrypt(st, JSON.stringify({ t: 'call', st: 'invite', cid, k: keyB }));
+        persistSession(key, st);
         const r = await transport.send(c.onion, token);
         if (!r.sent) { endCallUi('invite failed: ' + (r.error || 'peer unreachable')); return; }
         await transport.callMethod('callStart', { onion: c.onion, cid, key: keyB });
@@ -591,7 +737,9 @@ async function sendMessage() {
     online = online || (await transport.status());
     if (!online || !online.available) { queueOut(c, token, key, 'tor unavailable in this build — message queued in vault'); return; }
     if (!online.ready) { queueOut(c, token, key, 'tor still bootstrapping — queued in vault, will flush automatically'); return; }
-    const r = await transport.send(c.onion, token).catch(e => ({ sent: false, error: String(e && e.message || e) }));
+    const r = await withTimeout(
+        transport.send(c.onion, token).catch(e => ({ sent: false, error: String(e && e.message || e) })),
+        120000, { sent: false, error: 'send timed out — queued in vault, retrying automatically' });
     if (r.sent) { /* delivered */ }
     else {
         const why = r.error ? ('delivery failed: ' + cleanErr(r.error) + ' — queued, retrying automatically')
@@ -873,7 +1021,9 @@ async function openTorModal() {
         '<div id="se-report" class="bundlebox" style="font-size:.68rem;max-height:16vh;">' +
         (Transport.lastSendErr
             ? par((Transport.lastSendErr.onion ? 'to ' + Transport.lastSendErr.onion + ' · ' : '') + cleanErr(Transport.lastSendErr.error) + ' · ' + new Date(Transport.lastSendErr.t).toLocaleTimeString())
-            : '(no failed send this session)') + '</div>' +
+            : (Transport.lastSendUnacked
+                ? par('no hard failure · last body was flushed to ' + (Transport.lastSendUnacked.onion || 'peer') + ' but its 200 ack never returned (counted as delivered) · ' + new Date(Transport.lastSendUnacked.t).toLocaleTimeString())
+                : '(no failed send this session)')) + '</div>' +
         '<button class="ghost" id="tc-close">Close</button>' +
         '<button class="ghost" id="tc-restart">Restart tor</button>' +
         '<button class="ghost" id="tc-loopback">Loopback self-test</button>' +

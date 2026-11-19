@@ -301,15 +301,15 @@ public class TorBridge extends Plugin {
             return;
         }
         new Thread(() -> {
-            String err = "";
-            boolean sent = false;
+            PostResult pr;
             try {
-                sent = socksPost(onion, payload);
+                pr = socksPost(onion, payload);
             } catch (Throwable t) {
-                err = String.valueOf(t);
+                pr = PostResult.fail(String.valueOf(t));
             }
-            r.put("sent", sent);
-            if (!err.isEmpty()) r.put("error", err);
+            r.put("sent", pr.sent);
+            if (pr.unacked) r.put("unacked", true);
+            if (pr.error != null && !pr.error.isEmpty()) r.put("error", pr.error);
             call.resolve(r);
         }, "anon-send").start();
     }
@@ -328,7 +328,34 @@ public class TorBridge extends Plugin {
 
     /* ---------------- SOCKS5 CONNECT + HTTP POST ---------------- */
 
-    private static boolean socksPost(String onion, String payload) throws Exception {
+    /**
+     * Result of one SOCKS5 CONNECT + HTTP POST attempt.
+     *
+     *   sent    the peer's hidden service accepted the connection AND the whole
+     *           HTTP body was flushed into it.
+     *   unacked sent, but the peer's 200 response never came back (clean EOF
+     *           or a read timeout after the flush).
+     *
+     * A missing ack is NOT a delivery failure: tor routinely tears down the
+     * circuit the instant the receiver has the body, and the old code turned
+     * that into "local delivery: connection closed without response" — the
+     * exact "channel close" the user saw on every cross-device send. The
+     * body is already in the peer's 9878 listener/inbox, so report delivered
+     * and let the ratchet token dedupe any retry.
+     */
+    static final class PostResult {
+        final boolean sent;
+        final boolean unacked;
+        final String error;
+        PostResult(boolean sent, boolean unacked, String error) {
+            this.sent = sent; this.unacked = unacked; this.error = error;
+        }
+        static PostResult ok() { return new PostResult(true, false, null); }
+        static PostResult flushed() { return new PostResult(true, true, null); }
+        static PostResult fail(String e) { return new PostResult(false, false, e == null ? "" : e); }
+    }
+
+    private static PostResult socksPost(String onion, String payload) throws Exception {
         Socket s = new Socket();
         try {
             try {
@@ -393,15 +420,26 @@ public class TorBridge extends Plugin {
             os.write(payload.getBytes(StandardCharsets.UTF_8));
             os.flush();
 
+            /* The body is now in the peer's hidden service. Give the 200 ack
+             * a bounded window instead of the 180 s circuit timeout: a lost
+             * ack must not hold the sender's thread (or the UI) hostage. */
+            s.setSoTimeout(30000);
             BufferedReader br = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
-            String line = br.readLine();
-            /* never silent (0.3.22): a null or non-200 reply used to return
-             * plain false → loopback reported "no error text". The actual
-             * reply line IS the diagnosis. */
-            if (line == null) throw new Exception("local delivery: connection closed without response"
-                    + " | kernel9878: " + portHolderVerdict());
-            if (!line.contains(" 200 ")) throw new Exception("local delivery: unexpected reply '" + line + "'");
-            return true;
+            String line;
+            try {
+                line = br.readLine();
+            } catch (java.net.SocketTimeoutException ste) {
+                /* the body was fully flushed above; the ack is late or lost */
+                return PostResult.flushed();
+            } catch (java.io.IOException ioe) {
+                /* reset/EOF right after the flush — same verdict */
+                return PostResult.flushed();
+            }
+            /* never silent (0.3.22): a non-200 reply IS the diagnosis. A null
+             * line after a completed flush is no longer an error (0.4.3). */
+            if (line == null) return PostResult.flushed();
+            if (!line.contains(" 200 ")) return PostResult.fail("local delivery: unexpected reply '" + line + "'");
+            return PostResult.ok();
         } finally {
             try { s.close(); } catch (Throwable ignored) {}
         }
@@ -682,10 +720,14 @@ public class TorBridge extends Plugin {
                             if (!onion.endsWith(".onion") || body2.length() == 0 || body2.length() > MAX_PAYLOAD) {
                                 rbody = "{\"sent\":false,\"error\":\"bad onion or payload\"}";
                             } else {
-                                boolean sent = false; String sErr = "";
-                                try { sent = socksPost(onion, body2); } catch (Throwable te) { sErr = String.valueOf(te); }
-                                rbody = sent ? "{\"sent\":true}"
-                                        : "{\"sent\":false,\"error\":" + json(sErr) + "}";
+                                PostResult pr;
+                                try { pr = socksPost(onion, body2); }
+                                catch (Throwable te) { pr = PostResult.fail(String.valueOf(te)); }
+                                rbody = "{\"sent\":" + pr.sent
+                                        + (pr.unacked ? ",\"unacked\":true" : "")
+                                        + (pr.error != null && !pr.error.isEmpty()
+                                            ? ",\"error\":" + json(pr.error) : "")
+                                        + "}";
                             }
                         } else if (reqLine.startsWith("GET /poll")) {
                             StringBuilder sb = new StringBuilder("{\"inbox\":[");

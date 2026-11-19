@@ -205,7 +205,11 @@ function dumpState(st) { return JSON.stringify(st); }
 function loadState(json) {
     const o = JSON.parse(json);
     const st = new RatchetState();
-    for (const k in st) if (k in o) st[k] = o[k];
+    /* Copy EVERY serialised field, not just the fields that already exist on a
+     * fresh RatchetState. `responderSecrets` is added dynamically by
+     * openResponder(); the old loop silently dropped it on reload, which made
+     * a persisted responder state unable to decrypt its first envelope. */
+    for (const k in o) st[k] = o[k];
     return st;
 }
 
@@ -230,8 +234,27 @@ async function openInitiator(secretsSelf, bundleRemote) {
     st.dhSelfPrevSec = st.dhSelf.sec;
     st.firstHeaderExtras = { ikA: asB64(remote.ik ? remote.ik : remote.ik) }; // placeholder replaced below
     st.firstHeaderExtras = { ikA: bundleIdentityPub(secretsSelf) };
+    st.peerIk = remote.ik;       // identity of the peer this session belongs to
     st.awaitingPeer = false;
     return st;
+}
+
+/* Read the cleartext header of a wire envelope without attempting any
+ * decryption. The FIRST envelope a peer sends carries `ikA` (the sender's
+ * identity public key); later envelopes only carry ratchet metadata. The
+ * receiver MUST use ikA to pick the right contact — see 0.4.3 fix. */
+function envelopeHeader(wireToken) {
+    try {
+        const env = JSON.parse(atob(wireToken));
+        return env && env.h ? env.h : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function envelopeIdentity(wireToken) {
+    const h = envelopeHeader(wireToken);
+    return (h && typeof h.ikA === 'string') ? h.ikA : null;
 }
 
 function bundleIdentityPub(secretsSelf) {
@@ -257,6 +280,7 @@ async function openResponder(secretsSelf) {
     st.dhSelfPrevSec = st.dhSelf.sec;
     st.awaitingPeer = true;
     st.responderSecrets = secretsSelf;
+    st.peerIk = null;            // set from header.ikA on the first envelope
     return st;
 }
 
@@ -314,6 +338,7 @@ async function ratchetDecrypt(st, wireToken) {
         st.dhSelfPrevSec = st.dhSelf.sec;
         st.dhSelf = { pub: asB64(fresh.publicKey), sec: asB64(fresh.secretKey) };
         st.awaitingPeer = false;
+        st.peerIk = header.ikA;  // bind this session to the identity that opened it
         return td.decode(opened);
     }
 
@@ -388,6 +413,7 @@ global.CryptoCore = {
     createIdentity, verifyBundle, parseBundle, safetyNumber,
     openInitiator, openResponder,
     ratchetEncrypt, ratchetDecrypt, dumpState, loadState,
+    envelopeHeader, envelopeIdentity,
     b64: { u8ToB64, b64ToU8, concat },
     MAX_SKIP,
     version: '1'
