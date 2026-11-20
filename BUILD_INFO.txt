@@ -1,1 +1,7 @@
-run 44439464909 (c23e704) at 2026-11-19T01:49:32Z
+Anonymous 0.4.3 (org.private.anonymous)
+versionName: 0.4.3
+versionCode: 30
+commit: c23e704
+run: 44439464909
+built: 2026-11-19T01:49:32Z
+files: anonymous-0.4.3.apk  (same bytes as app-debug.apk)
